@@ -1,0 +1,186 @@
+use MathArray: all;
+use Array: all except {sum};
+import Array: {sum};
+use StdIO: all;
+
+inline
+float[*] sum( int outer, float[*] array)
+{
+  return with {
+           ( take( [outer], 0*shape(array)) <= iv < take( [outer], shape( array))): array[iv];
+         } : fold( +, genarray( drop( [outer], shape( array)), 0f));
+}
+
+inline
+float average( float[*] array)
+{
+   return sum( array) / tof( prod( shape( array)));
+}
+
+
+//------------------------------------------------------------------------------
+// Convolution function
+//------------------------------------------------------------------------------
+//specialize float[*] Conv( float[10,10,1] in, float[3,3,1,3] weights);
+
+inline
+float[*] Conv( float[*] in, float[*] weights)
+{
+  shp_act_map = (shape(in) - take( [dim(in)], shape(weights))) + 1;
+  shp_maps = drop( [dim(in)], shape(weights));
+  /*
+   * { iv -> sum( dim(in), { ov -> weights[ov] * in[iv+ov]
+   *                             | ov < take( [dim(in)], shape(weights)) } )
+   *       | iv < shp_act_map }
+   */
+  out = with {
+          (. <= iv <= .) : sum( dim(in),
+                                with {
+                                  (. <= ov <= .) : weights[ov] * in[iv+ov];
+                                } : genarray( take( [dim(in)], shape(weights)), genarray( shp_maps, 0f)));
+        } : genarray( shp_act_map, genarray( shp_maps, 0f));
+  return out;
+}
+
+
+//------------------------------------------------------------------------------
+// Activation functions
+//------------------------------------------------------------------------------
+
+inline
+float[*] ReLU( float[*] in)
+{
+  return max( 0f, in);
+}
+
+inline
+float[*] Linear( float[*] in)
+{
+  return in;
+}
+
+inline
+float[*] Logistic( float[*] in)
+{
+  return 1f/(1f + exp( -(in)));
+}
+
+inline
+float[*] HyperbolicTangent( float[*] in)
+{
+  return (exp( 2f*in) - 1f) / (exp( 2f*in) + 1f);
+}
+
+//------------------------------------------------------------------------------
+// Pooling functions
+//------------------------------------------------------------------------------
+
+
+inline
+float[*] MaxPool( float[*] in, int[.] filter, int[.] stride)
+{
+  ones = genarray( [dim( in)], 1);
+  filter = filter ++ drop( shape( filter), ones);
+  stride = stride ++ drop( shape( stride), filter);
+  shp = (shape( in) - filter) / stride + 1;
+  /*
+   * out = { iv -> maxval( { ov -> in[iv*stride+ov]
+   *                             | ov < filter})
+   *             | iv < shp};
+   */
+  out = with {
+          (. <= iv <= .) : maxval( with {
+                                     (. <= ov <= .) : in[iv*stride+ov];
+                                   } : genarray( filter, 0f));
+        } : genarray( shp, 0f);
+  return out;
+}
+
+inline
+float[*] AveragePool( float[*] in, int[.] filter, int[.] stride)
+{
+  ones = genarray( [dim( in)], 1);
+  filter = filter ++ drop( shape( filter), ones);
+  stride = stride ++ drop( shape( stride), filter);
+  shp = (shape( in) - filter) / stride + 1;
+  /*
+   * out = { iv -> maxval( { ov -> in[iv*stride+ov]
+   *                             | ov < filter})
+   *             | iv < shp};
+   */
+  out = with {
+          (. <= iv <= .) : average( with {
+                                      (. <= ov <= .) : in[iv*stride+ov];
+                                    } : genarray( filter, 0f));
+        } : genarray( shp, 0f);
+  return out;
+}
+
+//------------------------------------------------------------------------------
+#if 0
+
+float MeanSquaredError( float[.] result, float[.] labels)
+{
+  return sum ( 0.5f * ( labels - result) * ( labels - result) );
+}
+
+specialize float[*] BackConv( float[8,8,1] d_output, float[3,3,1] weights, float[10,10,1] input);
+float[*] BackConv( float[*] d_output, float[*] weights, float[*] input)
+{
+  d_weights = with {
+                ( . <= ov <= .) : sum( { iv -> input[ iv+ov] * d_output[iv]});
+              } : genarray( shape( weights), 0f);
+  return d_weights;
+}
+
+specialize float[*], float[*] BackConv2( float[8,8,1] d_output, float[3,3,1] weights, float[10,10,1] input);
+
+float[*], float[*] BackConv2( float[*] d_output, float[*] weights, float[*] input)
+{
+  d_input = with {
+              ( 0*shape( weights) <= ov < shape( weights)) :
+                   with {
+                    (ov <= iv < ov+shape(d_output)) : weights[ ov] * d_output[iv-ov];
+                   } : genarray( shape( input), 0f );
+            } : fold( +, genarray( shape(input), 0f));
+  d_weights = with {
+                ( 0*shape( d_output) <= iv < shape( d_output)) : 
+                   with { 
+                    (. <= ov <= .) : input[ iv+ov] * d_output[iv];
+                   } : genarray( shape( weights), 0f );
+              } : fold( +, genarray( shape(weights), 0f));
+  return (d_input, d_weights);
+}
+
+#endif
+//------------------------------------------------------------------------------
+
+int main()
+{
+   in = genarray( [28,28], 0f);
+   in[6,6] = 42f;
+
+   print( in);
+
+   k1 = genarray( [5,5,6], 1f/25f);
+   c1 = Logistic( Conv( in, k1 ));
+   print( shape(c1));
+
+   s1 = AveragePool( c1, [2,2], []);
+   print( shape( s1));
+
+   k2 = genarray( [5,5,6,12], 1f/150f);
+   c2 = Logistic( Conv( s1, k2));
+
+   print( shape( c2));
+
+   s2 = AveragePool( c2, [2,2], []);
+   print( shape( s2));
+
+   fc = genarray( [4,4,1,12,10], 1f/192f);
+   out = reshape( [10], Conv( s2, fc));
+   print( out);
+
+   return 0;
+}
+
