@@ -17,29 +17,43 @@ float average( float[*] array)
    return sum( array) / tof( prod( shape( array)));
 }
 
+inline StripOnes( int[.] shp)
+{
+   num_ones = sum( toi( shp == 1));
+   res = genarray( shp - num_ones, 0);
+   idx = 0;
+   for( i=0; i< shp[0]; i++) {
+      if( shp[i] !=1) {
+        shp[idx] = shp[i];
+        idx++;
+      }
+   }
+   return shp;
+}
 
 //------------------------------------------------------------------------------
 // Convolution function
 //------------------------------------------------------------------------------
-//specialize float[*] Conv( float[10,10,1] in, float[3,3,1,3] weights);
+//specialize float[*] Conv( float[10,10,1] in, float[3,3,1,3] weights, float[3] bias);
 
 inline
-float[*] Conv( float[*] in, float[*] weights)
+float[*] Conv( float[*] in, float[*] weights, float[*] bias)
 {
   shp_act_map = (shape(in) - take( [dim(in)], shape(weights))) + 1;
-  shp_maps = drop( [dim(in)], shape(weights));
+  shp_maps = drop( [dim(in)], shape(weights));  // should be identical to shape(bias) !
   /*
    * { iv -> sum( dim(in), { ov -> weights[ov] * in[iv+ov]
-   *                             | ov < take( [dim(in)], shape(weights)) } )
+   *                             | ov < take( [dim(in)], shape(weights)) } ) + bias
    *       | iv < shp_act_map }
    */
   out = with {
           (. <= iv <= .) : sum( dim(in),
                                 with {
                                   (. <= ov <= .) : weights[ov] * in[iv+ov];
-                                } : genarray( take( [dim(in)], shape(weights)), genarray( shp_maps, 0f)));
+                                } : genarray( take( [dim(in)], shape(weights)), genarray( shp_maps, 0f))) + bias;
         } : genarray( shp_act_map, genarray( shp_maps, 0f));
-  return out;
+  
+  return reshape( StripOnes( shape( out)), out);
 }
 
 
@@ -63,6 +77,12 @@ inline
 float[*] Logistic( float[*] in)
 {
   return 1f/(1f + exp( -(in)));
+}
+
+inline
+float[*] BackLogistic( float[*] d_out)
+{
+  return d_out * (1-d_out);
 }
 
 inline
@@ -117,11 +137,17 @@ float[*] AveragePool( float[*] in, int[.] filter, int[.] stride)
 }
 
 inline
-float[*] BackAveragePool( float[*] d_out, int[.] filter, int[.] stride )
+float[*] BackAveragePool( float[*] d_out, int[.] filter )
 {
-  
-   
+  ones = genarray( [dim( d_out)], 1);
+  filter = filter ++ drop( shape( filter), ones);
+  shp = shape( d_out) * filter;
+  d_in = with {
+           (. <= iv <=.) : d_out[iv/filter] / prod( filter);
+         } : genarray( shp, 0f);
+  return d_in;
 }
+
 //------------------------------------------------------------------------------
 #if 0
 
@@ -164,17 +190,19 @@ float[*], float[*] BackConv2( float[*] d_output, float[*] weights, float[*] inpu
 //------------------------------------------------------------------------------
 
 float[*], float[*], float[*]
-Forward( float[28,28] in, float[5,5,6] k1, float[5,5,6,12] k2, float[4,4,1,12,10] fc)
+Forward( float[28,28] in, float[5,5,6] k1, float[6] b1,
+                          float[5,5,6,12] k2, float[12] b2,
+                          float[4,4,12,10] fc, float[10] b)
 {
-   // s1 = in |> Conv( k1) |> Logistic() |> AveragePool( [2,2], []);
-   // s2 = s1 |> Conv( k2) |> Logistic() |> AveragePool( [2,2], []);
-   // out = s2 |> Conv( fc) |> Logistic() |> reshape( [10]);
+   // s1 = in |> Conv( k1, b1) |> Logistic() |> AveragePool( [2,2]);
+   // s2 = s1 |> Conv( k2, b2) |> Logistic() |> AveragePool( [2,2]);
+   // out = s2 |> Conv( fc, b) |> Logistic() |> reshape( [10]);
 
-   c1 = Logistic( Conv( in, k1 ));
-   s1 = AveragePool( c1, [2,2], []);
-   c2 = Logistic( Conv( s1, k2));
-   s2 = AveragePool( c2, [2,2], []);
-   out = reshape( [10], Logistic( Conv( s2, fc)));
+   c1 = Logistic( Conv( in, k1, b1 ));
+   s1 = AveragePool( c1, [2,2]);
+   c2 = Logistic( Conv( s1, k2, b2));
+   s2 = AveragePool( c2, [2,2]);
+   out = Logistic( Conv( s2, fc, b));
 
    return (s1,s2,out);
 }
@@ -185,15 +213,24 @@ BackProp( float[10] d_out, float[4,4,1,12,10] fc,
           float[12,12,6] s1, float[5,5,6] k1, float[28,28] in)
 {
    // s2, fc = d_out |> BackLogistic() |> BackConv( s2, fc);
-   // s1, k2 = s2 |> BackAveragePool( [2,2], []) |> BackLogistic() |> BackConv( s1, k2);
-   // __, k1 = s1 |> BackAveragePool( [2,2], []) |> BackLogistic() |> BackConv( in, k1);
+   // s1, k2 = s2 |> BackAveragePool( [2,2]) |> BackLogistic() |> BackConv( s1, k2);
+   // __, k1 = s1 |> BackAveragePool( [2,2]) |> BackLogistic() |> BackConv( in, k1);
 
    s2, fc = BackConv( BackLogistic( d_out), s2, fc);
-   c2 = BackAveragePool( s2, [2,2], []);
+   c2 = BackAveragePool( s2, [2,2]);
    s1, k2 = BackConv( BackLogistic( c2), s1, k2);
-   c1 = BackAveragePool( s1, [2,2], []);
+   c1 = BackAveragePool( s1, [2,2]);
    _, k1 = BackConv( BackLogistic( c1), in, k1);
    return (k1, k2, fc);
+}
+
+//------------------------------------------------------------------------------
+
+float[*] GetTrainingInput( int i)
+{
+   in = genarray( [28,28], 0f);
+   in[6,6] = 42f;
+   return in;
 }
 
 //------------------------------------------------------------------------------
@@ -202,8 +239,8 @@ int main()
 {
 
    epocs = 10;
-   num_train_ins = 1000;
-   num_test_ins = 100;
+   num_train_ins = 1;
+   num_test_ins = 0;
    k1 = genarray( [5,5,6], 1f/25f);
    k2 = genarray( [5,5,6,12], 1f/150f);
    fc = genarray( [4,4,1,12,10], 1f/192f);
@@ -211,8 +248,9 @@ int main()
    for( epoc = 1; epoc <epocs; epoc++) {
       for( i=0; i<num_train_ins; i++) { 
          in = GetTrainingInput( i);
+         target = GetTargetoutput( i);
          s1,s2,out = Forward( in, k1, k2, fc);
-         d_out = Error( out);
+         d_out = out - target;
          k1,k2,fc = BackProp( d_out, fc, s2,k2, s1, k1, in);
       }
    }
