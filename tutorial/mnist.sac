@@ -1,0 +1,60 @@
+module mnist;
+
+use Array: all;
+use StdIO: all;
+
+export all;
+
+int fgetint( File & f)
+{
+  val = 256*256*256*toi( fgetc( f));
+  val += 256*256*toi( fgetc( f));
+  val += 256 * toi( fgetc( f));
+  val += toi( fgetc( f));
+  
+  return val;
+}
+
+float[.,.,.] ReadImages( String::string file)
+{
+  err, f = fopen( file, "r");
+  if( System::fail(err)) {
+    printf( "Error occured when trying to open file %s for reading", file);
+  }
+
+  fseek( f, 4, 0);
+
+  num_images = fgetint( f);
+  num_rows = fgetint( f);
+  num_cols = fgetint( f);
+  
+  res = genarray( [num_images, num_rows, num_cols], 0f);
+
+  for( i=0; i< num_images; i++)
+    for( j=0; j< num_rows; j++)
+      for( k=0; k< num_cols; k++)
+        res[i,j,k] = tof( fgetc( f));
+
+  fclose( f);
+  return res;
+}
+
+int[.] ReadLabels( String::string file)
+{
+  err, f = fopen( file, "r");
+  if( System::fail(err)) {
+    printf( "Error occured when trying to open file %s for reading", file);
+  }
+
+  fseek( f, 4, 0);
+
+  num_labels = fgetint( f);
+  res = genarray( [num_labels], 0);
+
+  for( i=0; i< num_labels; i++)
+    res[i] = toi( fgetc( f));
+
+  fclose( f);
+  return res;
+}
+
