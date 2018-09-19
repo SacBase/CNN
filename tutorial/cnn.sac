@@ -17,30 +17,29 @@ float average( float[*] array)
    return sum( array) / tof( prod( shape( array)));
 }
 
-inline StripOnes( int[.] shp)
+inline int[.] StripOnes( int[.] shp)
 {
    num_ones = sum( toi( shp == 1));
-   res = genarray( shp - num_ones, 0);
+   res = genarray( shape(shp) - num_ones, 0);
    idx = 0;
-   for( i=0; i< shp[0]; i++) {
+   for( i=0; i< shape(shp)[0]; i++) {
       if( shp[i] !=1) {
-        shp[idx] = shp[i];
+        res[idx] = shp[i];
         idx++;
       }
    }
-   return shp;
+   return res;
 }
 
 //------------------------------------------------------------------------------
 // Convolution function
 //------------------------------------------------------------------------------
-//specialize float[*] Conv( float[10,10,1] in, float[3,3,1,3] weights, float[3] bias);
 
 inline
 float[*] Conv( float[*] in, float[*] weights, float[*] bias)
 {
   shp_act_map = (shape(in) - take( [dim(in)], shape(weights))) + 1;
-  shp_maps = drop( [dim(in)], shape(weights));  // should be identical to shape(bias) !
+  shp_maps = drop( [dim(in)], shape(weights));
   /*
    * { iv -> sum( dim(in), { ov -> weights[ov] * in[iv+ov]
    *                             | ov < take( [dim(in)], shape(weights)) } ) + bias
@@ -50,28 +49,40 @@ float[*] Conv( float[*] in, float[*] weights, float[*] bias)
           (. <= iv <= .) : sum( dim(in),
                                 with {
                                   (. <= ov <= .) : weights[ov] * in[iv+ov];
-                                } : genarray( take( [dim(in)], shape(weights)), genarray( shp_maps, 0f))) + bias;
+                                } : genarray( take( [dim(in)], shape(weights)), genarray( shp_maps, 0f)))
+                           + bias;
         } : genarray( shp_act_map, genarray( shp_maps, 0f));
   
-  return reshape( StripOnes( shape( out)), out);
+//  return reshape( StripOnes( shape( out)), out);
+   return out;
 }
 
+
+inline
+float[*], float[*], float[*]
+BackConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias, float rate)
+{
+  d_in = with {
+              ( take( [dim(in)], 0*shape( weights)) <= ov < take( [dim(in)], shape( weights))) :
+                   with {
+                    (ov <= iv < ov+take([dim(in)], shape(d_out))) : sum( weights[ ov] * d_out[iv-ov]);
+                   } : genarray( shape( in), 0f );
+            } : fold( +, genarray( shape(in), 0f));
+  d_weights = with {
+                ( take( [dim(in)], 0*shape( d_out)) <= iv < take( [dim(in)], shape( d_out))) : 
+                   with { 
+                    (. <= ov <= .) : in[ iv+ov] * d_out[iv];
+                   } : genarray( take( [dim(in)], shape( weights)),
+                                 genarray( drop( [dim(in)], shape(weights)), 0f) );
+              } : fold( +, genarray( shape(weights), 0f));
+  d_bias = sum( dim(in), d_out);
+
+  return ( d_in, weights - rate*d_weights, bias - rate*d_bias);
+}
 
 //------------------------------------------------------------------------------
 // Activation functions
 //------------------------------------------------------------------------------
-
-inline
-float[*] ReLU( float[*] in)
-{
-  return max( 0f, in);
-}
-
-inline
-float[*] Linear( float[*] in)
-{
-  return in;
-}
 
 inline
 float[*] Logistic( float[*] in)
@@ -80,15 +91,9 @@ float[*] Logistic( float[*] in)
 }
 
 inline
-float[*] BackLogistic( float[*] d_out)
+float[*] BackLogistic( float[*] d_out, float[*] out)
 {
-  return d_out * (1-d_out);
-}
-
-inline
-float[*] HyperbolicTangent( float[*] in)
-{
-  return (exp( 2f*in) - 1f) / (exp( 2f*in) + 1f);
+  return d_out * out * (1f - out);
 }
 
 //------------------------------------------------------------------------------
@@ -97,40 +102,18 @@ float[*] HyperbolicTangent( float[*] in)
 
 
 inline
-float[*] MaxPool( float[*] in, int[.] filter, int[.] stride)
+float[*] AveragePool( float[*] in, int[.] filter)
 {
   ones = genarray( [dim( in)], 1);
   filter = filter ++ drop( shape( filter), ones);
-  stride = stride ++ drop( shape( stride), filter);
-  shp = (shape( in) - filter) / stride + 1;
+  shp = shape( in) / filter;
   /*
-   * out = { iv -> maxval( { ov -> in[iv*stride+ov]
-   *                             | ov < filter})
-   *             | iv < shp};
-   */
-  out = with {
-          (. <= iv <= .) : maxval( with {
-                                     (. <= ov <= .) : in[iv*stride+ov];
-                                   } : genarray( filter, 0f));
-        } : genarray( shp, 0f);
-  return out;
-}
-
-inline
-float[*] AveragePool( float[*] in, int[.] filter, int[.] stride)
-{
-  ones = genarray( [dim( in)], 1);
-  filter = filter ++ drop( shape( filter), ones);
-  stride = stride ++ drop( shape( stride), filter);
-  shp = (shape( in) - filter) / stride + 1;
-  /*
-   * out = { iv -> maxval( { ov -> in[iv*stride+ov]
-   *                             | ov < filter})
+   * out = { iv -> average( { ov -> in[iv+ov] | ov < filter})
    *             | iv < shp};
    */
   out = with {
           (. <= iv <= .) : average( with {
-                                      (. <= ov <= .) : in[iv*stride+ov];
+                                      (. <= ov <= .) : in[iv*filter+ov];
                                     } : genarray( filter, 0f));
         } : genarray( shp, 0f);
   return out;
@@ -143,124 +126,138 @@ float[*] BackAveragePool( float[*] d_out, int[.] filter )
   filter = filter ++ drop( shape( filter), ones);
   shp = shape( d_out) * filter;
   d_in = with {
-           (. <= iv <=.) : d_out[iv/filter] / prod( filter);
+           (. <= iv <=.) : d_out[iv/filter] / tof( prod( filter));
          } : genarray( shp, 0f);
   return d_in;
 }
 
 //------------------------------------------------------------------------------
-#if 0
+// Error functions
+//------------------------------------------------------------------------------
 
-float MeanSquaredError( float[.] result, float[.] labels)
+float MeanSquaredError( float[*] result, float[*] labels)
 {
   return sum ( 0.5f * ( labels - result) * ( labels - result) );
 }
 
-specialize float[*] BackConv( float[8,8,1] d_output, float[3,3,1] weights, float[10,10,1] input);
-float[*] BackConv( float[*] d_output, float[*] weights, float[*] input)
-{
-  d_weights = with {
-                ( . <= ov <= .) : sum( { iv -> input[ iv+ov] * d_output[iv]});
-              } : genarray( shape( weights), 0f);
-  return d_weights;
-}
 
-specialize float[*], float[*] BackConv2( float[8,8,1] d_output, float[3,3,1] weights, float[10,10,1] input);
-
-float[*], float[*] BackConv2( float[*] d_output, float[*] weights, float[*] input)
-{
-  d_input = with {
-              ( 0*shape( weights) <= ov < shape( weights)) :
-                   with {
-                    (ov <= iv < ov+shape(d_output)) : weights[ ov] * d_output[iv-ov];
-                   } : genarray( shape( input), 0f );
-            } : fold( +, genarray( shape(input), 0f));
-  d_weights = with {
-                ( 0*shape( d_output) <= iv < shape( d_output)) : 
-                   with { 
-                    (. <= ov <= .) : input[ iv+ov] * d_output[iv];
-                   } : genarray( shape( weights), 0f );
-              } : fold( +, genarray( shape(weights), 0f));
-  return (d_input, d_weights);
-}
-
-#endif
 //------------------------------------------------------------------------------
 // Network Construction
 //------------------------------------------------------------------------------
 
-float[*], float[*], float[*]
-Forward( float[28,28] in, float[5,5,6] k1, float[6] b1,
-                          float[5,5,6,12] k2, float[12] b2,
-                          float[4,4,12,10] fc, float[10] b)
-{
-   // s1 = in |> Conv( k1, b1) |> Logistic() |> AveragePool( [2,2]);
-   // s2 = s1 |> Conv( k2, b2) |> Logistic() |> AveragePool( [2,2]);
-   // out = s2 |> Conv( fc, b) |> Logistic() |> reshape( [10]);
-
-   c1 = Logistic( Conv( in, k1, b1 ));
-   s1 = AveragePool( c1, [2,2]);
-   c2 = Logistic( Conv( s1, k2, b2));
-   s2 = AveragePool( c2, [2,2]);
-   out = Logistic( Conv( s2, fc, b));
-
-   return (s1,s2,out);
-}
-
-float[*], float[*], float[*]
-BackProp( float[10] d_out, float[4,4,1,12,10] fc,
-          float[8,8,1,12] s2, float[5,5,6,12] k2,
-          float[12,12,6] s1, float[5,5,6] k1, float[28,28] in)
-{
-   // s2, fc = d_out |> BackLogistic() |> BackConv( s2, fc);
-   // s1, k2 = s2 |> BackAveragePool( [2,2]) |> BackLogistic() |> BackConv( s1, k2);
-   // __, k1 = s1 |> BackAveragePool( [2,2]) |> BackLogistic() |> BackConv( in, k1);
-
-   s2, fc = BackConv( BackLogistic( d_out), s2, fc);
-   c2 = BackAveragePool( s2, [2,2]);
-   s1, k2 = BackConv( BackLogistic( c2), s1, k2);
-   c1 = BackAveragePool( s1, [2,2]);
-   _, k1 = BackConv( BackLogistic( c1), in, k1);
-   return (k1, k2, fc);
-}
-
-//------------------------------------------------------------------------------
-
-float[*] GetTrainingInput( int i)
+float[*] ZhangGetTrainingInput( int i)
 {
    in = genarray( [28,28], 0f);
    in[6,6] = 42f;
    return in;
 }
 
+float[*] ZhangGetTargetOutput( int i)
+{
+   out = genarray( [1,1,1,1,10], 0f);
+   return out;
+}
+
+void RunZhang()
+{
+   epocs = 10;
+   epocs_output = 1;
+   rate = 0.5f;
+   num_train_ins = 1;
+   num_test_ins = 0;
+   k1 = genarray( [5,5,6], 1f/25f);
+   b1 = genarray( [6], 1f/6f);
+   k2 = genarray( [5,5,6,12], 1f/150f);
+   b2 = genarray( [12], 1f/12f);
+   fc = genarray( [4,4,1,12,10], 1f/192f);
+   b = genarray( [10], 1f/10f);
+
+   printf( "Running Zhang with rate %f\n", tod( rate));
+
+   for( epoc = 0; epoc <epocs; epoc++) {
+      for( i=0; i<num_train_ins; i++) { 
+         in = ZhangGetTrainingInput( i);
+         target = ZhangGetTargetOutput( i);
+
+         // c1 = in |> Conv( k1, b1) |> Logistic() ;
+         // s1 = c1 |> AveragePool( [2,2]);
+         // c2 = s1 |> Conv( k2, b2) |> Logistic();
+         // s2 = c2 |> AveragePool( [2,2]);
+         // out = s2 |> Conv( fc, b) |> Logistic();
+
+         c1 = Logistic( Conv( in, k1, b1 ));
+         s1 = AveragePool( c1, [2,2]);
+         c2 = Logistic( Conv( s1, k2, b2));
+         s2 = AveragePool( c2, [2,2]);
+         out = Logistic( Conv( s2, fc, b));
+
+         d_out = out - target;
+
+         print( out);
+         printf( "The error is %f\n", tod( MeanSquaredError( out, target)));
+
+         // d_s2, fc, b = d_out |> BackLogistic( out) |> BackConv( fc, s2, b, rate);
+         // d_s1, k2, b2 = d_s2 |> BackAveragePool( [2,2]) |> BackLogistic( c2) |> BackConv( k2, s1, b2, rate);
+         // _, k1, b1 = d_s1    |> BackAveragePool( [2,2]) |> BackLogistic( c1) |> BackConv( k1, in, b1, rate);
+
+         d_s2, fc, b = BackConv( BackLogistic( d_out, out), fc, s2, b, rate);
+         d_c2 = BackAveragePool( d_s2, [2,2]);
+         d_s1, k2, b2 = BackConv( BackLogistic( d_c2, c2), k2, s1, b2, rate);
+         d_c1 = BackAveragePool( d_s1, [2,2]);
+         _, k1, b1 = BackConv( BackLogistic( d_c1, c1), k1, in, b1, rate);
+
+      }
+
+   }
+
+}
+  
+//------------------------------------------------------------------------------
+
+void RunMazur()
+{
+  w14 = [[0.15f, 0.25f], [0.2f, 0.3f]];
+  b1 = [0.35f, 0.35f];
+  w58 = [[[0.4f, 0.5f], [0.45f, 0.55f]]];
+  b2 = [0.6f, 0.6f];
+
+  in = [0.05f, 0.1f];
+  target = [[[0.01f, 0.99f]]];
+  epocs = 10000;
+  epocs_output = 1000;
+  rate = 0.5f;
+
+  printf( "Running Mazur with rate %f\n", tod( rate));
+
+  for( i=0; i<epocs; i++) {
+    // forward sweep:
+    h = Logistic( Conv( in, w14, b1 ));
+    o = Logistic( Conv( h, w58, b2 ));
+   
+    d_o = o - target;
+
+    if( i % epocs_output == 0) {
+      print( o);
+      printf( "The error after %d epochs is %f\n", i, tod( MeanSquaredError( o, target)));
+    }
+
+    // back propagation:
+    d_h, w58, b2 = BackConv( BackLogistic( d_o, o), w58, h, b2, rate);
+    _, w14, b1 = BackConv( BackLogistic( d_h, h), w14, in, b1, rate);
+  }
+
+  h = Logistic( Conv( in, w14, b1 ));
+  o = Logistic( Conv( h, w58, b2 ));
+  print( o);
+  printf( "The error after %d epochs is %f\n", i, tod( MeanSquaredError( o, target)));
+
+}
+
 //------------------------------------------------------------------------------
 
 int main()
 {
-
-   epocs = 10;
-   num_train_ins = 1;
-   num_test_ins = 0;
-   k1 = genarray( [5,5,6], 1f/25f);
-   k2 = genarray( [5,5,6,12], 1f/150f);
-   fc = genarray( [4,4,1,12,10], 1f/192f);
-
-   for( epoc = 1; epoc <epocs; epoc++) {
-      for( i=0; i<num_train_ins; i++) { 
-         in = GetTrainingInput( i);
-         target = GetTargetoutput( i);
-         s1,s2,out = Forward( in, k1, k2, fc);
-         d_out = out - target;
-         k1,k2,fc = BackProp( d_out, fc, s2,k2, s1, k1, in);
-      }
-   }
-
-   for( i=0; i<num_test_ins; i++) {
-      in = GetTrainingInput( i);
-      _,__,out = Forward( in, k1, k2, fc);
-      print( out);
-   }
-  
+   RunZhang();
 
    return 0;
 }
