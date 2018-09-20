@@ -48,10 +48,7 @@ int MaxPos( float[1,1,1,1,10] output)
 // Convolution function
 //------------------------------------------------------------------------------
 
-specialize float[*] Conv( float[28,28] in, float[5,5,6] weights, float[6] bias);
-specialize float[*] Conv( float[12,12,6] in, float[5,5,6,12] weights, float[12] bias);
-specialize float[*] Conv( float[4,4,1,12] in, float[4,4,1,12,10] weights, float[10] bias);
-
+inline
 float[*] Conv( float[*] in, float[*] weights, float[*] bias)
 {
   shp_act_map = (shape(in) - take( [dim(in)], shape(weights))) + 1;
@@ -160,24 +157,59 @@ float MeanSquaredError( float[*] result, float[*] labels)
 // Network Construction
 //------------------------------------------------------------------------------
 
-float[*] ZhangGetTrainingInput( int i)
+float[5,5,6], float[6], float[5,5,6,12], float[12], float[4,4,1,12,10], float[10], float
+TrainZhang( float[28,28] in, float[5,5,6] k1, float[6] b1,
+                             float[5,5,6,12] k2, float[12] b2,
+                             float[4,4,1,12,10] fc, float[10] b,
+                             float[1,1,1,1,10] target, float rate)
 {
-   in = genarray( [28,28], 0f);
-   in[6,6] = 42f;
-   return in;
+  // c1 = in |> Conv( k1, b1) |> Logistic() ;
+  // s1 = c1 |> AveragePool( [2,2]);
+  // c2 = s1 |> Conv( k2, b2) |> Logistic();
+  // s2 = c2 |> AveragePool( [2,2]);
+  // out = s2 |> Conv( fc, b) |> Logistic();
+
+  c1 = Logistic( Conv( in, k1, b1 ));
+  s1 = AveragePool( c1, [2,2]);
+  c2 = Logistic( Conv( s1, k2, b2));
+  s2 = AveragePool( c2, [2,2]);
+  out = Logistic( Conv( s2, fc, b));
+
+  d_out = out - target;
+  error = MeanSquaredError( out, target);
+
+  // d_s2, fc, b = d_out |> BackLogistic( out) |> BackConv( fc, s2, b, rate);
+  // d_s1, k2, b2 = d_s2 |> BackAveragePool( [2,2]) |> BackLogistic( c2) |> BackConv( k2, s1, b2, rate);
+  // _, k1, b1 = d_s1    |> BackAveragePool( [2,2]) |> BackLogistic( c1) |> BackConv( k1, in, b1, rate);
+
+  d_s2, fc, b = BackConv( BackLogistic( d_out, out), fc, s2, b, rate);
+  d_c2 = BackAveragePool( d_s2, [2,2]);
+  d_s1, k2, b2 = BackConv( BackLogistic( d_c2, c2), k2, s1, b2, rate);
+  d_c1 = BackAveragePool( d_s1, [2,2]);
+  _, k1, b1 = BackConv( BackLogistic( d_c1, c1), k1, in, b1, rate);
+
+  return ( k1, b1, k2, b2, fc, b, error);
 }
 
-float[*] ZhangGetTargetOutput( int i)
+float[1,1,1,1,10]
+TestZhang(float[28,28] in, float[5,5,6] k1, float[6] b1,
+                             float[5,5,6,12] k2, float[12] b2,
+                             float[4,4,1,12,10] fc, float[10] b )
 {
-   out = genarray( [1,1,1,1,10], 0f);
+   c1 = Logistic( Conv( in, k1, b1 ));
+   s1 = AveragePool( c1, [2,2]);
+   c2 = Logistic( Conv( s1, k2, b2));
+   s2 = AveragePool( c2, [2,2]);
+   out = Logistic( Conv( s2, fc, b));
+
    return out;
 }
 
 void RunZhang()
 {
-   epocs = 10;
-   training = 6000;
-   tests = 100;
+   epocs = 2000;
+   training = 500;
+   tests = 10000;
    epocs_output = 1;
    rate = 0.5f;
    k1 = genarray( [5,5,6], 1f/25f);
@@ -206,45 +238,24 @@ void RunZhang()
    printf( "Running Zhang with rate %f\n", tod( rate));
 
    
-   for( epoc = 0; epoc <epocs; epoc++) {
+   for( epoc = 1; epoc <=epocs; epoc++) {
       error = 0d;
-      for( i=0; i< min( shape(training_images)[0], training); i++) { 
+      for( i=1; i<= min( shape(training_images)[0], training); i++) { 
          in = training_images[i];
          target = genarray([1,1,1,1,10], 0f);
          target[[0,0,0,0,training_labels[i]]] = 1f;
 
-         // c1 = in |> Conv( k1, b1) |> Logistic() ;
-         // s1 = c1 |> AveragePool( [2,2]);
-         // c2 = s1 |> Conv( k2, b2) |> Logistic();
-         // s2 = c2 |> AveragePool( [2,2]);
-         // out = s2 |> Conv( fc, b) |> Logistic();
+         k1, b1, k2, b2, fc, b, err = TrainZhang( in, k1, b1, k2, b2, fc, b, target, rate);
 
-         c1 = Logistic( Conv( in, k1, b1 ));
-         s1 = AveragePool( c1, [2,2]);
-         c2 = Logistic( Conv( s1, k2, b2));
-         s2 = AveragePool( c2, [2,2]);
-         out = Logistic( Conv( s2, fc, b));
+         error += tod(err);
 
-         d_out = out - target;
-         error += tod( MeanSquaredError( out, target));
-
-         // d_s2, fc, b = d_out |> BackLogistic( out) |> BackConv( fc, s2, b, rate);
-         // d_s1, k2, b2 = d_s2 |> BackAveragePool( [2,2]) |> BackLogistic( c2) |> BackConv( k2, s1, b2, rate);
-         // _, k1, b1 = d_s1    |> BackAveragePool( [2,2]) |> BackLogistic( c1) |> BackConv( k1, in, b1, rate);
-
-         d_s2, fc, b = BackConv( BackLogistic( d_out, out), fc, s2, b, rate);
-         d_c2 = BackAveragePool( d_s2, [2,2]);
-         d_s1, k2, b2 = BackConv( BackLogistic( d_c2, c2), k2, s1, b2, rate);
-         d_c1 = BackAveragePool( d_s1, [2,2]);
-         _, k1, b1 = BackConv( BackLogistic( d_c1, c1), k1, in, b1, rate);
-
-         if( i%100 == 0) {
+         if( i%1000 == 0) {
             printf( "%d images trained\n", i);
          }
 
       }
       printf( "The mean error of epoc %d is %f\n",
-              epoc+1,
+              epoc,
               error / tod( min( shape(training_images)[0], training)) );
    }
 
@@ -255,11 +266,7 @@ void RunZhang()
       target = genarray([1,1,1,1,10], 0f);
       target[[0,0,0,0,test_labels[i]]] = 1f;
 
-      c1 = Logistic( Conv( in, k1, b1 ));
-      s1 = AveragePool( c1, [2,2]);
-      c2 = Logistic( Conv( s1, k2, b2));
-      s2 = AveragePool( c2, [2,2]);
-      out = Logistic( Conv( s2, fc, b));
+      out = TestZhang( in, k1, b1, k2, b2, fc, b);
 
       if( MaxPos( out) == test_labels[i]) {
         correct ++;
