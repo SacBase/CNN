@@ -1,6 +1,7 @@
+use CommandLine: all;
 use MathArray: all;
-use Array: all except {sum};
-import Array: {sum};
+use Structures: all except {sum};
+import Structures: {sum};
 use StdIO: all;
 
 inline
@@ -32,13 +33,13 @@ inline int[.] StripOnes( int[.] shp)
 }
 
 inline
-int MaxPos( float[1,1,1,1,10] output)
+int MaxPos( float[10,1,1,1,1] output)
 {
    max = output[[0,0,0,0,0]];
    res = 0;
    for( i=0; i<10; i++) 
-      if( output[[0,0,0,0,i]] > max) {
-        max = output[[0,0,0,0,i]];
+      if( output[[i,0,0,0,0]] > max) {
+        max = output[[i,0,0,0,0]];
         res = i;
       }
    return res;
@@ -48,48 +49,80 @@ int MaxPos( float[1,1,1,1,10] output)
 // Convolution function
 //------------------------------------------------------------------------------
 
+//specialize float[*] MultiConv( float[28,28] in, float[6,5,5] weights, float[6] bias);
+//specialize float[*] MultiConv( float[6,12,12] in, float[12,6,5,5] weights, float[12] bias);
+//specialize float[*] MultiConv( float[12,1,4,4] in, float[10,12,1,4,4] weights, float[10] bias);
+
 inline
-float[*] Conv( float[*] in, float[*] weights, float[*] bias)
+float[*] MultiConv( float[*] in, float[*] weights, float[*] bias)
 {
-  shp_act_map = (shape(in) - take( [dim(in)], shape(weights))) + 1;
-  shp_maps = drop( [dim(in)], shape(weights));
-  /*
-   * { iv -> sum( dim(in), { ov -> weights[ov] * in[iv+ov]
-   *                             | ov < take( [dim(in)], shape(weights)) } ) + bias
-   *       | iv < shp_act_map }
-   */
+  shp_act_map = (shape(in) - take( -[dim(in)], shape(weights))) + 1;
+  shp_maps = drop( -[dim(in)], shape(weights));
+  return with {
+           (. <= iv <= .) : Convolve( in, weights[iv]) + bias[iv];
+         } : genarray( shp_maps, genarray( shp_act_map, 0f));
+}
+
+
+inline
+float[*] Convolve( float[*] in, float[*] weights)
+{
+  shp = shape( in) - shape(weights) + 1;
   out = with {
-          (. <= iv <= .) : sum( dim(in),
-                                with {
+          (. <= iv <= .) : sum( with {
                                   (. <= ov <= .) : weights[ov] * in[iv+ov];
-                                } : genarray( take( [dim(in)], shape(weights)), genarray( shp_maps, 0f)))
-                           + bias;
-        } : genarray( shp_act_map, genarray( shp_maps, 0f));
-  
-//  return reshape( StripOnes( shape( out)), out);
+                                } : genarray( shape(weights), 0f));
+        } : genarray( shp, 0f);
+
    return out;
 }
 
+
 inline
 float[*], float[*], float[*]
-BackConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias, float rate)
+BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias, float rate)
 {
+  shp_maps = drop( -[dim(in)], shape(weights));
   d_in = with {
-              ( take( [dim(in)], 0*shape( weights)) <= ov < take( [dim(in)], shape( weights))) :
-                   with {
-                    (ov <= iv < ov+take([dim(in)], shape(d_out))) : sum( weights[ ov] * d_out[iv-ov]);
-                   } : genarray( shape( in), 0f );
-            } : fold( +, genarray( shape(in), 0f));
+           (0*shp_maps <= iv < shp_maps) : BackIn( d_out[iv], weights[iv], in);
+         } : fold( +, genarray( shape( in), 0f));
   d_weights = with {
-                ( take( [dim(in)], 0*shape( d_out)) <= iv < take( [dim(in)], shape( d_out))) : 
-                   with { 
-                    (. <= ov <= .) : in[ iv+ov] * d_out[iv];
-                   } : genarray( take( [dim(in)], shape( weights)),
-                                 genarray( drop( [dim(in)], shape(weights)), 0f) );
-              } : fold( +, genarray( shape(weights), 0f));
-  d_bias = sum( dim(in), d_out);
+                (. <= iv <= .) : BackWeights( d_out[iv], weights[iv], in);
+              } : genarray( shp_maps, genarray( take( -[dim(in)], shape(weights)), 0f));
+  d_bias = with {
+             (. <= iv <= .) : BackBias( d_out[iv]);
+           } : genarray( shp_maps, 0f);
 
   return ( d_in, weights - rate*d_weights, bias - rate*d_bias);
+}
+
+inline
+float[*] BackIn( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+            ( 0*shape( weights) <= ov < shape( weights)) :
+                   with {
+                    (ov <= iv < ov+shape(d_out)) : weights[ ov] * d_out[iv-ov];
+                   } : genarray( shape( in), 0f );
+         } : fold( +, genarray( shape(in), 0f));
+}
+
+
+inline
+float[*] BackWeights( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+           ( 0*shape( d_out) <= iv < shape( d_out)) : 
+                   with { 
+                    (. <= ov <= .) : in[ iv+ov] * d_out[iv];
+                   } : genarray( shape( weights), 0f );
+              } : fold( +, genarray( shape(weights), 0f));
+}
+
+inline
+float[*] BackBias( float[*] d_out)
+{
+  return sum( d_out);
 }
 
 //------------------------------------------------------------------------------
@@ -117,7 +150,7 @@ inline
 float[*] AveragePool( float[*] in, int[.] filter)
 {
   ones = genarray( [dim( in)], 1);
-  filter = filter ++ drop( shape( filter), ones);
+  filter = drop( shape( filter), ones) ++ filter;
   shp = shape( in) / filter;
   /*
    * out = { iv -> average( { ov -> in[iv+ov] | ov < filter})
@@ -135,7 +168,7 @@ inline
 float[*] BackAveragePool( float[*] d_out, int[.] filter )
 {
   ones = genarray( [dim( d_out)], 1);
-  filter = filter ++ drop( shape( filter), ones);
+  filter = drop( shape( filter), ones) ++ filter;
   shp = shape( d_out) * filter;
   d_in = with {
            (. <= iv <=.) : d_out[iv/filter] / tof( prod( filter));
@@ -147,6 +180,7 @@ float[*] BackAveragePool( float[*] d_out, int[.] filter )
 // Error functions
 //------------------------------------------------------------------------------
 
+inline
 float MeanSquaredError( float[*] result, float[*] labels)
 {
   return sum ( 0.5f * ( labels - result) * ( labels - result) );
@@ -157,66 +191,61 @@ float MeanSquaredError( float[*] result, float[*] labels)
 // Network Construction
 //------------------------------------------------------------------------------
 
-float[5,5,6], float[6], float[5,5,6,12], float[12], float[4,4,1,12,10], float[10], float
-TrainZhang( float[28,28] in, float[5,5,6] k1, float[6] b1,
-                             float[5,5,6,12] k2, float[12] b2,
-                             float[4,4,1,12,10] fc, float[10] b,
-                             float[1,1,1,1,10] target, float rate)
+float[6,5,5], float[6], float[12,6,5,5], float[12], float[10,12,1,4,4], float[10], float
+TrainZhang( float[28,28] in, float[6,5,5] k1, float[6] b1,
+                             float[12,6,5,5] k2, float[12] b2,
+                             float[10,12,1,4,4] fc, float[10] b,
+                             float[10,1,1,1,1] target, float rate)
 {
-  // c1 = in |> Conv( k1, b1) |> Logistic() ;
+  // c1 = in |> MultiConv( k1, b1) |> Logistic() ;
   // s1 = c1 |> AveragePool( [2,2]);
-  // c2 = s1 |> Conv( k2, b2) |> Logistic();
+  // c2 = s1 |> MultiConv( k2, b2) |> Logistic();
   // s2 = c2 |> AveragePool( [2,2]);
-  // out = s2 |> Conv( fc, b) |> Logistic();
+  // out = s2 |> MultiConv( fc, b) |> Logistic();
 
-  c1 = Logistic( Conv( in, k1, b1 ));
+  c1 = Logistic( MultiConv( in, k1, b1 ));
   s1 = AveragePool( c1, [2,2]);
-  c2 = Logistic( Conv( s1, k2, b2));
+  c2 = Logistic( MultiConv( s1, k2, b2));
   s2 = AveragePool( c2, [2,2]);
-  out = Logistic( Conv( s2, fc, b));
+  out = Logistic( MultiConv( s2, fc, b));
 
   d_out = out - target;
   error = MeanSquaredError( out, target);
 
-  // d_s2, fc, b = d_out |> BackLogistic( out) |> BackConv( fc, s2, b, rate);
-  // d_s1, k2, b2 = d_s2 |> BackAveragePool( [2,2]) |> BackLogistic( c2) |> BackConv( k2, s1, b2, rate);
-  // _, k1, b1 = d_s1    |> BackAveragePool( [2,2]) |> BackLogistic( c1) |> BackConv( k1, in, b1, rate);
+  // d_s2, fc, b = d_out |> BackLogistic( out) |> BackMultiConv( fc, s2, b, rate);
+  // d_s1, k2, b2 = d_s2 |> BackAveragePool( [2,2]) |> BackLogistic( c2) |> BackMultiConv( k2, s1, b2, rate);
+  // _, k1, b1 = d_s1    |> BackAveragePool( [2,2]) |> BackLogistic( c1) |> BackMultiConv( k1, in, b1, rate);
 
-  d_s2, fc, b = BackConv( BackLogistic( d_out, out), fc, s2, b, rate);
+  d_s2, fc, b = BackMultiConv( BackLogistic( d_out, out), fc, s2, b, rate);
   d_c2 = BackAveragePool( d_s2, [2,2]);
-  d_s1, k2, b2 = BackConv( BackLogistic( d_c2, c2), k2, s1, b2, rate);
+  d_s1, k2, b2 = BackMultiConv( BackLogistic( d_c2, c2), k2, s1, b2, rate);
   d_c1 = BackAveragePool( d_s1, [2,2]);
-  _, k1, b1 = BackConv( BackLogistic( d_c1, c1), k1, in, b1, rate);
+  _, k1, b1 = BackMultiConv( BackLogistic( d_c1, c1), k1, in, b1, rate);
 
   return ( k1, b1, k2, b2, fc, b, error);
 }
 
-float[1,1,1,1,10]
-TestZhang(float[28,28] in, float[5,5,6] k1, float[6] b1,
-                             float[5,5,6,12] k2, float[12] b2,
-                             float[4,4,1,12,10] fc, float[10] b )
+float[10,1,1,1,1]
+TestZhang(float[28,28] in, float[6,5,5] k1, float[6] b1,
+                             float[12,6,5,5] k2, float[12] b2,
+                             float[10,12,1,4,4] fc, float[10] b )
 {
-   c1 = Logistic( Conv( in, k1, b1 ));
+   c1 = Logistic( MultiConv( in, k1, b1 ));
    s1 = AveragePool( c1, [2,2]);
-   c2 = Logistic( Conv( s1, k2, b2));
+   c2 = Logistic( MultiConv( s1, k2, b2));
    s2 = AveragePool( c2, [2,2]);
-   out = Logistic( Conv( s2, fc, b));
+   out = Logistic( MultiConv( s2, fc, b));
 
    return out;
 }
 
-void RunZhang()
+void RunZhang( int epocs, int training, int tests, float rate)
 {
-   epocs = 2000;
-   training = 500;
-   tests = 10000;
-   epocs_output = 1;
-   rate = 0.5f;
-   k1 = genarray( [5,5,6], 1f/25f);
+   k1 = genarray( [6,5,5], 1f/25f);
    b1 = genarray( [6], 1f/6f);
-   k2 = genarray( [5,5,6,12], 1f/150f);
+   k2 = genarray( [12,6,5,5], 1f/150f);
    b2 = genarray( [12], 1f/12f);
-   fc = genarray( [4,4,1,12,10], 1f/192f);
+   fc = genarray( [10,12,1,4,4], 1f/192f);
    b = genarray( [10], 1f/10f);
 
    printf( "Reading training images ...\n");
@@ -235,15 +264,16 @@ void RunZhang()
    test_labels = (int[10000])mnist::ReadLabels( "t10k-labels.idx1-ubyte");
    printf( "Read %d training labels ...\n", shape(test_labels)[0]);
 
-   printf( "Running Zhang with rate %f\n", tod( rate));
+   printf( "Running Zhang with %d epocs, %d training images, %d tests, and a rate of %f\n",
+           epocs, training, tests, tod( rate));
 
    
    for( epoc = 1; epoc <=epocs; epoc++) {
       error = 0d;
       for( i=1; i<= min( shape(training_images)[0], training); i++) { 
          in = training_images[i];
-         target = genarray([1,1,1,1,10], 0f);
-         target[[0,0,0,0,training_labels[i]]] = 1f;
+         target = genarray([10,1,1,1,1], 0f);
+         target[[training_labels[i],0,0,0,0]] = 1f;
 
          k1, b1, k2, b2, fc, b, err = TrainZhang( in, k1, b1, k2, b2, fc, b, target, rate);
 
@@ -263,8 +293,8 @@ void RunZhang()
    correct = 0;
    for( i=0; i< min( shape(test_images)[0], tests); i++) {
       in = test_images[i];
-      target = genarray([1,1,1,1,10], 0f);
-      target[[0,0,0,0,test_labels[i]]] = 1f;
+      target = genarray([10,1,1,1,1], 0f);
+      target[[test_labels[i],0,0,0,0]] = 1f;
 
       out = TestZhang( in, k1, b1, k2, b2, fc, b);
 
@@ -299,8 +329,8 @@ void RunMazur()
 
   for( i=0; i<epocs; i++) {
     // forward sweep:
-    h = Logistic( Conv( in, w14, b1 ));
-    o = Logistic( Conv( h, w58, b2 ));
+    h = Logistic( MultiConv( in, w14, b1 ));
+    o = Logistic( MultiConv( h, w58, b2 ));
    
     d_o = o - target;
 
@@ -310,12 +340,12 @@ void RunMazur()
     }
 
     // back propagation:
-    d_h, w58, b2 = BackConv( BackLogistic( d_o, o), w58, h, b2, rate);
-    _, w14, b1 = BackConv( BackLogistic( d_h, h), w14, in, b1, rate);
+    d_h, w58, b2 = BackMultiConv( BackLogistic( d_o, o), w58, h, b2, rate);
+    _, w14, b1 = BackMultiConv( BackLogistic( d_h, h), w14, in, b1, rate);
   }
 
-  h = Logistic( Conv( in, w14, b1 ));
-  o = Logistic( Conv( h, w58, b2 ));
+  h = Logistic( MultiConv( in, w14, b1 ));
+  o = Logistic( MultiConv( h, w58, b2 ));
   print( o);
   printf( "The error after %d epochs is %f\n", i, tod( MeanSquaredError( o, target)));
 
@@ -325,7 +355,34 @@ void RunMazur()
 
 int main()
 {
-   RunZhang();
+   if( (argc() >1)  && ( strcmp( argv(1), "-mt") == 0 )) {
+     off = 2;
+   } else {
+     off = 0;
+   }
+
+   if( argc() > off+1) {
+     epochs = toi( argv( off+1));
+   } else {
+     epochs = 200;
+   }
+   if( argc() > off+2) {
+     training = toi( argv( off+2));
+   } else {
+     training = 500;
+   }
+   if( argc() > off+3) {
+     tests = toi( argv( off+3));
+   } else {
+     tests = 10000;
+   }
+   if( argc() > off+4) {
+     rate = tof( argv( off+4));
+   } else {
+     rate = 0.5f;
+   }
+
+   RunZhang( epochs, training, tests, rate);
 
    return 0;
 }
