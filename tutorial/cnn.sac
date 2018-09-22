@@ -312,18 +312,16 @@ void RunZhang( int epocs, int training, int tests, float rate)
   
 //------------------------------------------------------------------------------
 
-void RunMazur()
+void RunMazur(int epocs, int training, int tests, float rate)
 {
-  w14 = [[0.15f, 0.25f], [0.2f, 0.3f]];
+  w14 = [[0.15f, 0.20f], [0.25f, 0.3f]];
   b1 = [0.35f, 0.35f];
-  w58 = [[[0.4f, 0.5f], [0.45f, 0.55f]]];
+  w58 = [[[0.4f], [0.45f]], [[0.5f], [0.55f]]];
   b2 = [0.6f, 0.6f];
 
   in = [0.05f, 0.1f];
-  target = [[[0.01f, 0.99f]]];
-  epocs = 10000;
+  target = [[[0.01f]], [[0.99f]]];
   epocs_output = 1000;
-  rate = 0.5f;
 
   printf( "Running Mazur with rate %f\n", tod( rate));
 
@@ -383,6 +381,7 @@ int main()
    }
 
    RunZhang( epochs, training, tests, rate);
+//   RunMazur( );
 
    return 0;
 }
