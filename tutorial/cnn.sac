@@ -4,13 +4,8 @@ use Structures: all except {sum};
 import Structures: {sum};
 use StdIO: all;
 
-inline
-float[*] sum( int outer, float[*] array)
-{
-  return with {
-           ( take( [outer], 0*shape(array)) <= iv < take( [outer], shape( array))): array[iv];
-         } : fold( +, genarray( drop( [outer], shape( array)), 0f));
-}
+#define FUNS 1
+
 
 inline
 float average( float[*] array)
@@ -84,10 +79,10 @@ BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias, flo
 {
   shp_maps = drop( -[dim(in)], shape(weights));
   d_in = with {
-           (0*shp_maps <= iv < shp_maps) : BackIn( d_out[iv], weights[iv], in);
+           (0*shp_maps <= iv < shp_maps) : BackIn2( d_out[iv], weights[iv], in);
          } : fold( +, genarray( shape( in), 0f));
   d_weights = with {
-                (. <= iv <= .) : BackWeights( d_out[iv], weights[iv], in);
+                (. <= iv <= .) : BackWeights2( d_out[iv], weights[iv], in);
               } : genarray( shp_maps, genarray( take( -[dim(in)], shape(weights)), 0f));
   d_bias = with {
              (. <= iv <= .) : BackBias( d_out[iv]);
@@ -96,7 +91,13 @@ BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias, flo
   return ( d_in, weights - rate*d_weights, bias - rate*d_bias);
 }
 
+#ifdef FUNS
+specialize float[*] BackIn( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+specialize float[*] BackIn( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+specialize float[*] BackIn( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+#else
 inline
+#endif
 float[*] BackIn( float[*] d_out, float[*] weights, float[*] in)
 {
   return with {
@@ -107,16 +108,56 @@ float[*] BackIn( float[*] d_out, float[*] weights, float[*] in)
          } : fold( +, genarray( shape(in), 0f));
 }
 
-
+#ifdef FUNS
+specialize float[*] BackIn2( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+specialize float[*] BackIn2( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+specialize float[*] BackIn2( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+#else
 inline
+#endif
+float[*] BackIn2( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+            ( . <= iv <= .):
+                   with {
+                    ( max( 0*shape( weights), (iv - shape(d_out)+1)) <= ov < min( shape(weights), iv+1)) : weights[ ov] * d_out[iv-ov];
+                   } : fold( +, 0f );
+         } : genarray( shape(in), 0f);
+}
+
+
+#ifdef FUNS
+specialize float[*] BackWeights( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+specialize float[*] BackWeights( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+specialize float[*] BackWeights( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+#else
+inline
+#endif
 float[*] BackWeights( float[*] d_out, float[*] weights, float[*] in)
 {
   return with {
-           ( 0*shape( d_out) <= iv < shape( d_out)) : 
+           ( 0*shape( weights) <= iv < shape( d_out)) : 
                    with { 
                     (. <= ov <= .) : in[ iv+ov] * d_out[iv];
                    } : genarray( shape( weights), 0f );
               } : fold( +, genarray( shape(weights), 0f));
+}
+
+#ifdef FUNS
+specialize float[*] BackWeights2( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+specialize float[*] BackWeights2( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+specialize float[*] BackWeights2( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+#else
+inline
+#endif
+float[*] BackWeights2( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+           ( . <= ov <= .) :
+                   with { 
+                    (0*shape( d_out) <= iv < shape( d_out)) : in[ iv+ov] * d_out[iv];
+                   } : fold( +, 0f );
+              } : genarray( shape( weights), 0f);
 }
 
 inline
@@ -325,27 +366,31 @@ void RunMazur(int epocs, int training, int tests, float rate)
 
   printf( "Running Mazur with rate %f\n", tod( rate));
 
-  for( i=0; i<epocs; i++) {
-    // forward sweep:
-    h = Logistic( MultiConv( in, w14, b1 ));
-    o = Logistic( MultiConv( h, w58, b2 ));
+  // forward sweep:
+  h = Logistic( MultiConv( in, w14, b1 ));
+  o = Logistic( MultiConv( h, w58, b2 ));
    
-    d_o = o - target;
+  printf( "The output is:\n");
+  print( o);
 
-    if( i % epocs_output == 0) {
-      print( o);
-      printf( "The error after %d epochs is %f\n", i, tod( MeanSquaredError( o, target)));
-    }
+  d_o = o - target;
 
-    // back propagation:
-    d_h, w58, b2 = BackMultiConv( BackLogistic( d_o, o), w58, h, b2, rate);
-    _, w14, b1 = BackMultiConv( BackLogistic( d_h, h), w14, in, b1, rate);
-  }
+  // back propagation:
+  d_h, w58, b2 = BackMultiConv( BackLogistic( d_o, o), w58, h, b2, rate);
+  _, w14, b1 = BackMultiConv( BackLogistic( d_h, h), w14, in, b1, rate);
+  printf( "new weights w58 are:\n");
+  print( w58);
+  printf( "new weights b2 are:\n");
+  print( b2);
+  printf( "new weights w14 are:\n");
+  print( w14);
+  printf( "new weights b1 are:\n");
+  print( b1);
 
   h = Logistic( MultiConv( in, w14, b1 ));
   o = Logistic( MultiConv( h, w58, b2 ));
   print( o);
-  printf( "The error after %d epochs is %f\n", i, tod( MeanSquaredError( o, target)));
+  printf( "The error after 1 epoch is %f\n", tod( MeanSquaredError( o, target)));
 
 }
 
@@ -362,12 +407,12 @@ int main()
    if( argc() > off+1) {
      epochs = toi( argv( off+1));
    } else {
-     epochs = 200;
+     epochs = 20;
    }
    if( argc() > off+2) {
      training = toi( argv( off+2));
    } else {
-     training = 500;
+     training = 1000;
    }
    if( argc() > off+3) {
      tests = toi( argv( off+3));
@@ -381,7 +426,7 @@ int main()
    }
 
    RunZhang( epochs, training, tests, rate);
-//   RunMazur( );
+   //RunMazur( epochs, training, tests, rate );
 
    return 0;
 }
