@@ -4,6 +4,7 @@ use Structures: all except {sum};
 import Structures: {sum};
 use StdIO: all;
 
+#define MBI 1
 #define FUNS 1
 
 
@@ -27,7 +28,7 @@ inline int[.] StripOnes( int[.] shp)
    return res;
 }
 
-inline
+
 int MaxPos( float[10,1,1,1,1] output)
 {
    max = output[[0,0,0,0,0]];
@@ -73,14 +74,35 @@ float[*] Convolve( float[*] in, float[*] weights)
 }
 
 
+#ifdef FUNS
+specialize float[*], float[*], float[*] BackMultiConv( float[6,24,24] d_out, float[6,5,5] weights, float[28,28] in, float[6] bias, float rate);
+specialize float[*], float[*], float[*] BackMultiConv( float[12,1,8,8] d_out, float[12,6,5,5] weights, float[6,12,12] in, float[10] bias, float rate);
+specialize float[*], float[*], float[*] BackMultiConv( float[10,1,1,1,1] d_out, float[10,12,1,4,4] weights, float[12,1,4,4] in, float[12] bias, float rate);
+#else
 inline
+#endif
 float[*], float[*], float[*]
 BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias, float rate)
 {
+  shp_act_map = take( -[dim(in)], shape(weights));
   shp_maps = drop( -[dim(in)], shape(weights));
+#ifdef MBI
+  d_in = with {
+            ( . <= iv <= .) :
+                   with {
+                      (0*shp_maps <= ov < shp_maps) {
+                           lb = max( 0*shp_act_map, iv - take( -[dim(in)], shape(d_out)) + 1);
+                           ub = min( shp_act_map, iv+1 );
+                        } : with { 
+                              ( lb <= ov2 < ub) : weights[ov ++ ov2] * d_out[ov ++ (iv-ov2)];
+                            } : fold( +, 0f);
+                   } : fold( +, 0f);
+         } : genarray( shape(in), 0f);
+#else
   d_in = with {
            (0*shp_maps <= iv < shp_maps) : BackIn2( d_out[iv], weights[iv], in);
          } : fold( +, genarray( shape( in), 0f));
+#endif
   d_weights = with {
                 (. <= iv <= .) : BackWeights2( d_out[iv], weights[iv], in);
               } : genarray( shp_maps, genarray( take( -[dim(in)], shape(weights)), 0f));
@@ -238,6 +260,12 @@ TrainZhang( float[28,28] in, float[6,5,5] k1, float[6] b1,
                              float[10,12,1,4,4] fc, float[10] b,
                              float[10,1,1,1,1] target, float rate)
 {
+  float[6,24,24] c1, d_c1;
+  float[6,12,12] s1, d_s1;
+  float[12,1,8,8] c2, d_c2;
+  float[12,1,4,4] s2, d_s2;
+  float[10,1,1,1,1] out, d_out;
+
   // c1 = in |> MultiConv( k1, b1) |> Logistic() ;
   // s1 = c1 |> AveragePool( [2,2]);
   // c2 = s1 |> MultiConv( k2, b2) |> Logistic();
@@ -312,10 +340,9 @@ void RunZhang( int epocs, int training, int tests, float rate)
    for( epoc = 1; epoc <=epocs; epoc++) {
       error = 0d;
       for( i=1; i<= min( shape(training_images)[0], training); i++) { 
-         in = training_images[i];
+         in = training_images[i-1];
          target = genarray([10,1,1,1,1], 0f);
-         target[[training_labels[i],0,0,0,0]] = 1f;
-
+         target[[training_labels[i-1],0,0,0,0]] = 1f;
          k1, b1, k2, b2, fc, b, err = TrainZhang( in, k1, b1, k2, b2, fc, b, target, rate);
 
          error += tod(err);
