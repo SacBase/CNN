@@ -1,0 +1,184 @@
+import cnn: all;
+use Benchmarking: all;
+use MathArray: all;
+use Structures: all;
+use StdIO: all;
+
+//specialize float[*] MultiConv( float[28,28] in, float[6,5,5] weights, float[6] bias);
+//specialize float[*] MultiConv( float[6,12,12] in, float[12,6,5,5] weights, float[12] bias);
+//specialize float[*] MultiConv( float[12,1,4,4] in, float[10,12,1,4,4] weights, float[10] bias);
+
+specialize float[*], float[*], float[*] BackMultiConv( float[6,24,24] d_out, float[6,5,5] weights, float[28,28] in, float[6] bias);
+specialize float[*], float[*], float[*] BackMultiConv( float[12,1,8,8] d_out, float[12,6,5,5] weights, float[6,12,12] in, float[10] bias);
+specialize float[*], float[*], float[*] BackMultiConv( float[10,1,1,1,1] d_out, float[10,12,1,4,4] weights, float[12,1,4,4] in, float[12] bias);
+
+//specialize float[*] BackIn( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+//specialize float[*] BackIn( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+//specialize float[*] BackIn( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+
+//specialize float[*] BackIn2( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+//specialize float[*] BackIn2( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+//specialize float[*] BackIn2( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+
+//specialize float[*] BackWeights( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+//specialize float[*] BackWeights( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+//specialize float[*] BackWeights( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+
+//specialize float[*] BackWeights2( float[24,24] d_out, float[5,5] weights, float[28,28] in);
+//specialize float[*] BackWeights2( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
+//specialize float[*] BackWeights2( float[1,1,1,1] d_out, float[12,1,4,4] weights, float[12,1,4,4] in);
+
+//------------------------------------------------------------------------------
+// Network Construction
+//------------------------------------------------------------------------------
+
+float[6,5,5], float[6], float[12,6,5,5], float[12], float[10,12,1,4,4], float[10], float
+TrainZhang( float[28,28] in, float[6,5,5] k1, float[6] b1,
+                             float[12,6,5,5] k2, float[12] b2,
+                             float[10,12,1,4,4] fc, float[10] b,
+                             float[10,1,1,1,1] target)
+{
+  float[6,24,24] c1, d_c1;
+  float[6,12,12] s1, d_s1;
+  float[12,1,8,8] c2, d_c2;
+  float[12,1,4,4] s2, d_s2;
+  float[10,1,1,1,1] out, d_out;
+
+  c1 = Logistic( MultiConv( in, k1, b1 ));
+  s1 = AveragePool( c1, [2,2]);
+  c2 = Logistic( MultiConv( s1, k2, b2));
+  s2 = AveragePool( c2, [2,2]);
+  out = Logistic( MultiConv( s2, fc, b));
+
+  d_out = out - target;
+  error = MeanSquaredError( out, target);
+
+  d_s2, d_fc, d_b = BackMultiConv( BackLogistic( d_out, out), fc, s2, b);
+  d_c2 = BackAveragePool( d_s2, [2,2]);
+  d_s1, d_k2, d_b2 = BackMultiConv( BackLogistic( d_c2, c2), k2, s1, b2);
+  d_c1 = BackAveragePool( d_s1, [2,2]);
+  _, d_k1, d_b1 = BackMultiConv( BackLogistic( d_c1, c1), k1, in, b1);
+
+  return ( d_k1, d_b1, d_k2, d_b2, d_fc, d_b, error);
+}
+
+float[10,1,1,1,1]
+TestZhang(float[28,28] in, float[6,5,5] k1, float[6] b1,
+                             float[12,6,5,5] k2, float[12] b2,
+                             float[10,12,1,4,4] fc, float[10] b )
+{
+   c1 = Logistic( MultiConv( in, k1, b1 ));
+   s1 = AveragePool( c1, [2,2]);
+   c2 = Logistic( MultiConv( s1, k2, b2));
+   s2 = AveragePool( c2, [2,2]);
+   out = Logistic( MultiConv( s2, fc, b));
+
+   return out;
+}
+
+//------------------------------------------------------------------------------
+
+int main()
+{
+   
+   epochs, batchsize, trainings, tests, rate = CnnReadParameters( 20, 100, 1000, 10000, 0.5f);
+
+   k1 = genarray( [6,5,5], 1f/25f);
+   b1 = genarray( [6], 1f/6f);
+   k2 = genarray( [12,6,5,5], 1f/150f);
+   b2 = genarray( [12], 1f/12f);
+   fc = genarray( [10,12,1,4,4], 1f/192f);
+   b = genarray( [10], 1f/10f);
+
+   printf( "Reading training images ...\n");
+   training_images = ( float[60000,28,28]) mnist::ReadImages( "tutorial/train-images.idx3-ubyte");
+   printf( "Read %d training images ...\n", shape(training_images)[0]);
+
+   printf( "Reading training labels ...\n");
+   training_labels = ( int[60000]) mnist::ReadLabels( "tutorial/train-labels.idx1-ubyte");
+   printf( "Read %d training labels ...\n", shape(training_labels)[0]);
+
+   printf( "Reading test images ...\n");
+   test_images = (float[10000,28,28])mnist::ReadImages( "tutorial/t10k-images.idx3-ubyte");
+   printf( "Read %d training images ...\n", shape(test_images)[0]);
+
+   printf( "Reading test labels ...\n");
+   test_labels = (int[10000])mnist::ReadLabels( "tutorial/t10k-labels.idx1-ubyte");
+   printf( "Read %d training labels ...\n", shape(test_labels)[0]);
+
+   printf( "Running Zhang with %d epochs, batchsize %d, %d training images, %d tests, and a rate of %f\n",
+           epochs, batchsize, trainings, tests, tod( rate));
+
+   trainings = min( shape(training_images)[0], trainings);
+   tests = min( shape(test_images)[0], tests);
+
+   i1 = getInterval( "training", 0);
+   i2 = getInterval( "test", 1);
+   
+   start( i1);
+   for( epoch = 1; epoch <=epochs; epoch++) {
+      error = 0d;
+      for( i=0; i< trainings/batchsize; i++) { 
+         bd_k1, bd_b1, bd_k2, bd_b2, bd_fc, bd_b, berr
+            = with {
+                 (.<= iv <= .) {
+                    in = training_images[i*batchsize+iv];
+                    target = genarray([10,1,1,1,1], 0f);
+                    target[[training_labels[i*batchsize+iv],0,0,0,0]] = 1f;
+                    d_k1, d_b1, d_k2, d_b2, d_fc, d_b, err
+                       = TrainZhang( in, k1, b1, k2, b2, fc, b, target);
+                 } : (d_k1, d_b1, d_k2, d_b2, d_fc, d_b, err);
+              } : ( genarray([batchsize], k1),
+                    genarray([batchsize], b1),
+                    genarray([batchsize], k2),
+                    genarray([batchsize], b2),
+                    genarray([batchsize], fc),
+                    genarray([batchsize], b),
+                    genarray([batchsize], 0f));
+         k1 = k1-rate*averageOuter( bd_k1);
+         b1 = b1-rate*averageOuter( bd_b1);
+         k2 = k2-rate*averageOuter( bd_k2);
+         b2 = b2-rate*averageOuter( bd_b2);
+         fc = fc-rate*averageOuter( bd_fc);
+         b = b-rate*averageOuter( bd_b);
+
+         error += tod(sum(berr));
+
+      }
+      printf( "The mean error of epoch %d is %f\n",
+              epoch,
+              error / tod( trainings) );
+   }
+   end( i1);
+   printResult( i1);
+
+   start( i2);
+
+   out = with {
+           (. <= iv <= .) : TestZhang( test_images[iv], k1, b1, k2, b2, fc, b);
+         } : genarray( [tests], genarray( [10,1,1,1,1], 0f));
+
+   correct = with {
+               ([0] <= iv < [tests]) : MaxPos( out[iv]) == test_labels[iv] ? 1 : 0;
+             } : fold( +, 0);
+
+   error = with {
+               ([0] <= iv < [tests]) {
+                 target = genarray([10,1,1,1,1], 0f);
+                 target[[test_labels[iv],0,0,0,0]] = 1f;
+               } : tod( MeanSquaredError( out[iv], target));
+           } : fold( +, 0d);
+
+   end(i2);
+
+   printf( "%d of %d numbers correctly identified!\n", correct, tests);
+   printf( "The mean error of %d tests is %f\n",
+           min( shape(test_images)[0], tests),
+           error / tod( tests) );
+   printResult( i2);
+
+   return 0;
+}
+  
+
+
