@@ -1,4 +1,4 @@
-import cnn: all;
+import cnn_tc: all;
 use Benchmarking: all;
 use MathArray: all;
 use Structures: all;
