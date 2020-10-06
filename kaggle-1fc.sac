@@ -4,15 +4,15 @@ use MathArray: all;
 use Structures: all;
 use StdIO: all;
 
-#define CATEGORIES 10
+#define CATEGORIES 47
 
 //specialize float[*] MultiConv( float[28,28] in, float[6,5,5] weights, float[6] bias);
 //specialize float[*] MultiConv( float[6,12,12] in, float[12,6,5,5] weights, float[12] bias);
 //specialize float[*] MultiConv( float[12,1,4,4] in, float[CATEGORIES,12,1,4,4] weights, float[CATEGORIES] bias);
 
-specialize float[*], float[*], float[*] BackMultiConv( float[6,24,24] d_out, float[6,5,5] weights, float[28,28] in, float[6] bias);
-specialize float[*], float[*], float[*] BackMultiConv( float[12,1,8,8] d_out, float[12,6,5,5] weights, float[6,12,12] in, float[12] bias);
-specialize float[*], float[*], float[*] BackMultiConv( float[CATEGORIES,1,1,1,1] d_out, float[CATEGORIES,12,1,4,4] weights, float[12,1,4,4] in, float[CATEGORIES] bias);
+specialize float[*], float[*], float[*] BackMultiConv( float[64,24,24] d_out, float[64,5,5] weights, float[28,28] in, float[6] bias);
+specialize float[*], float[*], float[*] BackMultiConv( float[128,1,8,8] d_out, float[128,64,5,5] weights, float[64,12,12] in, float[12] bias);
+specialize float[*], float[*], float[*] BackMultiConv( float[CATEGORIES,1,1,1,1] d_out, float[CATEGORIES,128,1,4,4] weights, float[128,1,4,4] in, float[CATEGORIES] bias);
 
 //specialize float[*] BackIn( float[24,24] d_out, float[5,5] weights, float[28,28] in);
 //specialize float[*] BackIn( float[1,8,8] d_out, float[6,5,5] weights, float[6,12,12] in);
@@ -34,16 +34,16 @@ specialize float[*], float[*], float[*] BackMultiConv( float[CATEGORIES,1,1,1,1]
 // Network Construction
 //------------------------------------------------------------------------------
 
-float[6,5,5], float[6], float[12,6,5,5], float[12], float[CATEGORIES,12,1,4,4], float[CATEGORIES], float
-TrainZhang( float[28,28] in, float[6,5,5] k1, float[6] b1,
-                             float[12,6,5,5] k2, float[12] b2,
-                             float[CATEGORIES,12,1,4,4] fc, float[CATEGORIES] b,
+float[64,5,5], float[64], float[128,64,5,5], float[128], float[CATEGORIES,128,1,4,4], float[CATEGORIES], float
+TrainKaggle( float[28,28] in, float[64,5,5] k1, float[64] b1,
+                             float[128,64,5,5] k2, float[128] b2,
+                             float[CATEGORIES,128,1,4,4] fc, float[CATEGORIES] b,
                              float[CATEGORIES,1,1,1,1] target)
 {
-  float[6,24,24] c1, d_c1;
-  float[6,12,12] s1, d_s1;
-  float[12,1,8,8] c2, d_c2;
-  float[12,1,4,4] s2, d_s2;
+  float[64,24,24] c1, d_c1;
+  float[64,12,12] s1, d_s1;
+  float[128,1,8,8] c2, d_c2;
+  float[128,1,4,4] s2, d_s2;
   float[CATEGORIES,1,1,1,1] out, d_out;
 
   c1 = Logistic( MultiConv( in, k1, b1 ));
@@ -65,9 +65,9 @@ TrainZhang( float[28,28] in, float[6,5,5] k1, float[6] b1,
 }
 
 float[CATEGORIES,1,1,1,1]
-TestZhang(float[28,28] in, float[6,5,5] k1, float[6] b1,
-                             float[12,6,5,5] k2, float[12] b2,
-                             float[CATEGORIES,12,1,4,4] fc, float[CATEGORIES] b )
+TestKaggle(float[28,28] in, float[64,5,5] k1, float[64] b1,
+                             float[128,64,5,5] k2, float[128] b2,
+                             float[CATEGORIES,128,1,4,4] fc, float[CATEGORIES] b )
 {
    c1 = Logistic( MultiConv( in, k1, b1 ));
    s1 = AveragePool( c1, [2,2]);
@@ -85,11 +85,11 @@ int main()
    
    epochs, batchsize, trainings, tests, rate = CnnReadParameters( 20, 100, 1000, 10000, 0.5f);
 
-   k1 = genarray( [6,5,5], 1f/25f);
-   b1 = genarray( [6], 1f/6f);
-   k2 = genarray( [12,6,5,5], 1f/150f);
-   b2 = genarray( [12], 1f/12f);
-   fc = genarray( [CATEGORIES,12,1,4,4], 1f/192f);
+   k1 = genarray( [64,5,5], 1f/25f);
+   b1 = genarray( [64], 1f/6f);
+   k2 = genarray( [128,64,5,5], 1f/150f);
+   b2 = genarray( [128], 1f/12f);
+   fc = genarray( [CATEGORIES,128,1,4,4], 1f/192f);
    b = genarray( [CATEGORIES], 1f/tof(CATEGORIES));
 
    printf( "Reading training images ...\n");
@@ -128,7 +128,7 @@ int main()
                     target = genarray([CATEGORIES,1,1,1,1], 0f);
                     target[[training_labels[i*batchsize+iv],0,0,0,0]] = 1f;
                     d_k1, d_b1, d_k2, d_b2, d_fc, d_b, err
-                       = TrainZhang( in, k1, b1, k2, b2, fc, b, target);
+                       = TrainKaggle( in, k1, b1, k2, b2, fc, b, target);
                  } : (d_k1, d_b1, d_k2, d_b2, d_fc, d_b, err);
               } : ( genarray([batchsize], k1),
                     genarray([batchsize], b1),
@@ -157,7 +157,7 @@ int main()
    start( i2);
 
    out = with {
-           (. <= iv <= .) : TestZhang( test_images[iv], k1, b1, k2, b2, fc, b);
+           (. <= iv <= .) : TestKaggle( test_images[iv], k1, b1, k2, b2, fc, b);
          } : genarray( [tests], genarray( [CATEGORIES,1,1,1,1], 0f));
 
    correct = with {
