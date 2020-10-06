@@ -2,6 +2,7 @@ module mnist;
 
 use Array: all;
 use StdIO: all;
+use RuntimeError: all;
 
 export all;
 
@@ -39,11 +40,11 @@ float[.,.,.] ReadImages( String::string file)
   return res;
 }
 
-int[.] ReadLabels( String::string file)
+int[.] ReadLabels( int categories, String::string file)
 {
   err, f = fopen( file, "r");
   if( System::fail(err)) {
-    printf( "Error occured when trying to open file %s for reading", file);
+    error( 1, "Error occured when trying to open file %s for reading\n", file);
   }
 
   fseek( f, 4, 0);
@@ -51,8 +52,13 @@ int[.] ReadLabels( String::string file)
   num_labels = fgetint( f);
   res = genarray( [num_labels], 0);
 
-  for( i=0; i< num_labels; i++)
+  for( i=0; i< num_labels; i++) {
     res[i] = toi( fgetc( f));
+    if( (res[i]<0) || (res[i]>=categories)) {
+      error( 1, "Label is out of range; value is %d but should be in [0,%d]!\n",
+                res[i], categories-1);
+    }
+  }
 
   fclose( f);
   return res;
