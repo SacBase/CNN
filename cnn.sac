@@ -36,11 +36,13 @@ float average( float[*] array)
    return sum( array) / tof( prod( shape( array)));
 }
 
-int MaxPos( float[10,1,1,1,1] output)
+inline
+int MaxPos( float[.,.,.,.,.] output)
 {
+   n = shape( output)[0];
    max = output[[0,0,0,0,0]];
    res = 0;
-   for( i=0; i<10; i++) 
+   for( i=0; i<n; i++) 
       if( output[[i,0,0,0,0]] > max) {
         max = output[[i,0,0,0,0]];
         res = i;
@@ -165,7 +167,7 @@ float[*] BackBias( float[*] d_out)
 //------------------------------------------------------------------------------
 
 inline
-float[*] Logistic( float[*] in)
+float[+] Logistic( float[+] in)
 {
   return 1f/(1f + exp( -(in)));
 }
