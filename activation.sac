@@ -1,0 +1,21 @@
+module activation;
+
+
+use Array: all;
+use MathArray: all;
+
+export all;
+
+
+inline
+float[+] Logistic( float[+] in)
+{
+  return 1f/(1f + exp( -(in)));
+}
+
+inline
+float[*] BackLogistic( float[*] d_out, float[*] out)
+{
+  return d_out * out * (1f - out);
+}
+

@@ -1,4 +1,8 @@
 import cnn: all;
+import convolution: all;
+import activation: all;
+import pooling: all;
+
 use Benchmarking: all;
 use MathArray: all;
 use Structures: all;

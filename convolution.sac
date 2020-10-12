@@ -1,0 +1,214 @@
+module convolution;
+
+
+use Array: all;
+
+export {MultiConv,Convolve,PaddingConst,BackMultiConv};
+
+/**
+ *
+ * The shape constraints are:
+ *
+ *------------------------------------------------------------------------------
+ *
+ *  float[<wv|m> ++ <rv|n>] MultiConv( float[<sv|n>] in,
+ *                                     float[<wv|m> ++ <w2v|n>] weights,
+ *                                     float[<wv|m>] bias)
+ *
+ *  where <rv|n> = <sv|n> - <w2v|n> +1
+ *
+ *==================================== or ======================================
+ *
+ * float[*] out MultiConv( float[*] in, float[*] weights, float[*] bias)
+ *
+ * assert( dim(weights) == dim(bias) + dim(in) )
+ * assert( all( shape(bias) == take( [dim(bias)], shape(weights)) ) )
+ * assert( all( shape(in) > drop([dim(bias)], shape(weights)) ) )
+ * assert( all( shape(out) == shape(bias)
+ *                         ++ (shape( in) - drop([dim(bias)], shape(weights)) + 1) ) )
+ *
+ *------------------------------------------------------------------------------
+ *
+ *  float[<rv|n>] Convolve( float[<sv|n>] in, float[<wv|n>] weights)
+ *
+ *  where <rv|n> = <sv|n> - <wv|n> +1
+ *
+ *==================================== or ======================================
+ *
+ * float[*] out Convolve( float[*] in, float[*] weights)
+ *
+ * assert( dim(in) == dim(weights) )
+ * assert( all( shape(in) > shape(weights) ) )
+ * assert( all( shape(out) == (shape( in) - shape(weights) + 1) ) )
+ *
+ *------------------------------------------------------------------------------
+ *
+ *  float[<rv|n>] out PaddingConst( float[<sv|n>] in, int[n,2] pad, float val)
+ *
+ *  where <rv|n> = <sv|n> + pad[.,0] + pad[.,1]
+ *
+ *==================================== or ======================================
+ *
+ * float[*] out PaddingConst( float[*] in, int[.,.] pad, float val)
+ * 
+ * assert( shape(pad)[0] dim(in) )
+ * assert( shape(pad)[1] == 2 )
+ * assert( all( shape(out) == shape(in) + pad[.,0] + pad[.,1] ) )
+ *
+ *------------------------------------------------------------------------------
+ *  float[<sv|n>] d_in,
+ *  float[<wv|m> ++ <w2v|n>] d_weights,
+ *  float[<wv|m>] d_bias
+ *     BackMultiConv( float[<wv|m> ++ <rv|n>] d_out,
+ *                    float[<wv|m> ++ <w2v|n>] weights,
+                      float[<sv|n>] in,
+ *                    float[<wv|m>] bias)
+ *
+ *  where <rv|n> = <sv|n> - <w2v|n> + 1
+ *
+ *==================================== or ======================================
+ *
+ * float[*] d_in, float[*] d_weights, float[*] d_bias
+ *    BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias)
+ *
+ * assert( dim(d_out) == dim(weights) )
+ * assert( dim(d_out) == dim(in) + dim(bias) )
+ * assert( all( shape(d_out) == shape(bias)
+ *                              ++ (shape(in) - drop(dim(bias),shape(weights)) + 1) ) )
+ *
+ * assert( all( shape(d_in) == shape(in) ) )
+ * assert( all( shape(d_weights) == shape(weights) ) )
+ * assert( all( shape(d_bias) == shape(bias) ) )
+ *------------------------------------------------------------------------------
+ */
+
+#define MBI 1
+
+inline
+float[*] MultiConv( float[*] in, float[*] weights, float[*] bias)
+{
+  shp_act_map = (shape(in) - take( -[dim(in)], shape(weights))) + 1;
+  shp_maps = drop( -[dim(in)], shape(weights));
+  return with {
+           (. <= iv <= .) : Convolve( in, weights[iv]) + bias[iv];
+         } : genarray( shp_maps, genarray( shp_act_map, 0f));
+}
+
+
+inline
+float[*] Convolve( float[*] in, float[*] weights)
+{
+  shp = shape( in) - shape(weights) + 1;
+  out = with {
+          (. <= iv <= .) : sum( with {
+                                  (. <= ov <= .) : weights[ov] * in[iv+ov];
+                                } : genarray( shape(weights), 0f));
+        } : genarray( shp, 0f);
+
+   return out;
+}
+
+inline
+float[*] PaddingConst( float[*] in, int[.,.] pad, float val)
+{
+  low_off = pad[.,0];
+  high_pad = pad[.,1];
+  shp = shape(in) + low_off + high_pad;
+  return with {
+           (low_off <= iv < shape(in) + low_off) : in[iv-low_off];
+         } : genarray( shp, val);
+}
+
+
+
+
+
+float[*], float[*], float[*]
+BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias)
+{
+  shp_act_map = take( -[dim(in)], shape(weights));
+  shp_maps = drop( -[dim(in)], shape(weights));
+#ifdef MBI
+  d_in = with {
+            ( . <= iv <= .) :
+                   with {
+                      (0*shp_maps <= ov < shp_maps) {
+                           lb = max( 0*shp_act_map, iv - take( -[dim(in)], shape(d_out)) + 1);
+                           ub = min( shp_act_map, iv+1 );
+                        } : with { 
+                              ( lb <= ov2 < ub) : weights[ov ++ ov2] * d_out[ov ++ (iv-ov2)];
+                            } : fold( +, 0f);
+                   } : fold( +, 0f);
+         } : genarray( shape(in), 0f);
+#else
+  d_in = with {
+           (0*shp_maps <= iv < shp_maps) : BackIn2( d_out[iv], weights[iv], in);
+         } : fold( +, genarray( shape( in), 0f));
+#endif
+  d_weights = with {
+                (. <= iv <= .) : BackWeights2( d_out[iv], weights[iv], in);
+              } : genarray( shp_maps, genarray( take( -[dim(in)], shape(weights)), 0f));
+  d_bias = with {
+             (. <= iv <= .) : BackBias( d_out[iv]);
+           } : genarray( shp_maps, 0f);
+
+  return ( d_in, d_weights, d_bias);
+}
+
+inline
+float[*] BackIn( float[*] d_out, float[*] weights, float[*] in)
+//
+// assert( dim(d_out) == dim(weights) )
+// assert( dim(in) == dim(weights) )
+// assert( all( shape(d_out) == shape(in) - shape(weights) + 1 ) )
+// assert( all( shape(out) == shape(in) ) )
+//
+{
+  return with {
+            ( 0*shape( weights) <= ov < shape( weights)) :
+                   with {
+                    (ov <= iv < ov+shape(d_out)) : weights[ ov] * d_out[iv-ov];
+                   } : genarray( shape( in), 0f );
+         } : fold( +, genarray( shape(in), 0f));
+}
+
+inline
+float[*] BackIn2( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+            ( . <= iv <= .):
+                   with {
+                    ( max( 0*shape( weights), (iv - shape(d_out)+1)) <= ov < min( shape(weights), iv+1)) : weights[ ov] * d_out[iv-ov];
+                   } : fold( +, 0f );
+         } : genarray( shape(in), 0f);
+}
+
+
+inline
+float[*] BackWeights( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+           ( 0*shape( weights) <= iv < shape( d_out)) : 
+                   with { 
+                    (. <= ov <= .) : in[ iv+ov] * d_out[iv];
+                   } : genarray( shape( weights), 0f );
+              } : fold( +, genarray( shape(weights), 0f));
+}
+
+inline
+float[*] BackWeights2( float[*] d_out, float[*] weights, float[*] in)
+{
+  return with {
+           ( . <= ov <= .) :
+                   with { 
+                    (0*shape( d_out) <= iv < shape( d_out)) : in[ iv+ov] * d_out[iv];
+                   } : fold( +, 0f );
+              } : genarray( shape( weights), 0f);
+}
+
+inline
+float[*] BackBias( float[*] d_out)
+{
+  return sum( d_out);
+}
+

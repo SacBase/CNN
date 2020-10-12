@@ -1,0 +1,92 @@
+module pooling;
+
+
+use Array: all;
+
+export {AveragePool, BackAveragePool, MaxPool, BackMaxPool};
+
+inline
+float average( float[*] array)
+{
+   return sum( array) / tof( prod( shape( array)));
+}
+
+inline
+float maximum( float[*] array)
+{
+   return with {
+            (0*shape(array) <= iv < shape(array)) : array[iv];
+          } : fold( max, minfloat());
+}
+
+
+inline
+float[*] AveragePool( float[*] in, int[.] filter)
+//
+// assert( dim(in) >= shape(filter)[0] )
+// assert( shape(out) == shape(in)/filter )
+// 
+{
+  ones = genarray( [dim( in)], 1);
+  filter = drop( shape( filter), ones) ++ filter;
+  shp = shape( in) / filter;
+  /*
+   * out = { iv -> average( { ov -> in[iv+ov] | ov < filter})
+   *             | iv < shp};
+   */
+  out = with {
+          (. <= iv <= .) : average( with {
+                                      (. <= ov <= .) : in[iv*filter+ov];
+                                    } : genarray( filter, 0f));
+        } : genarray( shp, 0f);
+  return out;
+}
+
+inline
+float[*] BackAveragePool( float[*] d_out, int[.] filter )
+{
+  ones = genarray( [dim( d_out)], 1);
+  filter = drop( shape( filter), ones) ++ filter;
+  shp = shape( d_out) * filter;
+  d_in = with {
+           (. <= iv <=.) : d_out[iv/filter] / tof( prod( filter));
+         } : genarray( shp, 0f);
+  return d_in;
+}
+
+
+
+inline
+float[*] MaxPool( float[*] in, int[.] filter)
+//
+// assert( dim(in) >= shape(filter)[0] )
+// assert( shape(out) == shape(in)/filter )
+//
+{
+  ones = genarray( [dim( in)], 1);
+  filter = drop( shape( filter), ones) ++ filter;
+  shp = shape( in) / filter;
+  /*
+   * out = { iv -> maximum( { ov -> in[iv+ov] | ov < filter})
+   *             | iv < shp};
+   */
+  out = with {
+          (. <= iv <= .) : maximum( with {
+                                      (. <= ov <= .) : in[iv*filter+ov];
+                                    } : genarray( filter, 0f));
+        } : genarray( shp, 0f);
+  return out;
+}
+
+inline
+float[*] BackMaxPool( float[*] d_out, int[.] filter )
+{
+  ones = genarray( [dim( d_out)], 1);
+  filter = drop( shape( filter), ones) ++ filter;
+  shp = shape( d_out) * filter;
+  d_in = with {
+           (. <= iv <=.) : d_out[iv/filter] / tof( prod( filter));
+         } : genarray( shp, 0f);
+  return d_in;
+}
+
