@@ -3,7 +3,9 @@ module pooling;
 
 use Array: all;
 
-export {AveragePool, BackAveragePool, MaxPool, BackMaxPool};
+export {AveragePool, AveragePoolFlop,
+       BackAveragePool, BackAveragePoolFlop,
+       MaxPool, BackMaxPool};
 
 inline
 float average( float[*] array)
@@ -42,6 +44,14 @@ float[*] AveragePool( float[*] in, int[.] filter)
   return out;
 }
 
+int[.], double AveragePoolFlop( int[.] in_shp, int[.] filter)
+{
+   ones = genarray( shape( in_shp), 1);
+   filter = drop( shape( filter), ones) ++ filter;
+   shp = in_shp / filter;
+   return (shp, tod (prod(shp) * (prod(shape(filter))-1)) );
+}
+
 inline
 float[*] BackAveragePool( float[*] d_out, int[.] filter )
 {
@@ -54,6 +64,13 @@ float[*] BackAveragePool( float[*] d_out, int[.] filter )
   return d_in;
 }
 
+int[.], double BackAveragePoolFlop( int[.] d_out_shp, int[.] filter)
+{
+   ones = genarray( shape( d_out_shp), 1);
+   filter = drop( shape( filter), ones) ++ filter;
+   shp = d_out_shp * filter;
+   return (shp, tod (prod(shp) ) );
+}
 
 
 inline

@@ -7,6 +7,22 @@ use StdIO: all;
 
 export all;
 
+string flops2String( double flops)
+{
+  if (flops > 1e12) {
+    res = sprintf( "%.2f TFlops", flops/1e12);
+  } else if (flops > 1e9) {
+    res = sprintf( "%.2f GFlops", flops/1e9);
+  } else if (flops > 1e6) {
+    res = sprintf( "%.2f MFlops", flops/1e6);
+  } else if (flops > 1e3) {
+    res = sprintf( "%.2f KFlops", flops/1e3);
+  } else {
+    res = sprintf( "%.2f Flops", flops);
+  }
+  return res;
+}
+
 #if 0
 inline
 float[*] averageOuter( float[+] array)
@@ -51,6 +67,10 @@ float MeanSquaredError( float[*] result, float[*] labels)
   return sum ( 0.5f * ( labels - result) * ( labels - result) );
 }
 
+int[.], double MeanSquaredErrorFlop( int[.] result_shp, int[.] labels_shp)
+{
+  return (result_shp, tod (4*prod(result_shp) + (prod(result_shp)-1) ));
+}
 
 //------------------------------------------------------------------------------
 // Commandline functions

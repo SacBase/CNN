@@ -13,9 +13,19 @@ float[+] Logistic( float[+] in)
   return 1f/(1f + exp( -(in)));
 }
 
+int[.], double LogisticFlop( int[.] in_shp)
+{
+  return (in_shp, tod (4*prod(in_shp)));
+}
+
 inline
 float[*] BackLogistic( float[*] d_out, float[*] out)
 {
   return d_out * out * (1f - out);
+}
+
+int[.], double BackLogisticFlop( int[.] d_out_shp, int[.] out_shp)
+{
+  return ( out_shp, tod (3*prod(out_shp)));
 }
 
