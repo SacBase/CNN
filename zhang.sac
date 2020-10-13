@@ -104,6 +104,31 @@ TrainZhangFlop( int[.] in_shp, int[.] k1_shp, int[.] b1_shp,
            + bl2flops + bmc2flops + bap2flops
            + bl3flops + bmc3flops ;
 
+  printf("FLOP DETAIL 1 image:\n");
+  printf("----------------------------\n");
+  printf("conv 1:     %14s\n", flops2String( mc1flops));
+  printf("logistic 1: %14s\n", flops2String( log1flops));
+  printf("ave-pool 1: %14s\n", flops2String( ap1flops));
+  printf("conv 2:     %14s\n", flops2String( mc2flops));
+  printf("logistic 2: %14s\n", flops2String( log2flops));
+  printf("ave-pool 2: %14s\n", flops2String( ap2flops));
+  printf("conv 3(fc): %14s\n", flops2String( mc3flops));
+  printf("logistic 3: %14s\n", flops2String( log3flops));
+  printf("----------------------------\n");
+  printf("diff:       %14s\n", flops2String( tod( prod( out_shp))));
+  printf("mean-sqr:   %14s\n", flops2String( log3flops));
+  printf("----------------------------\n");
+  printf("b-log 1:    %14s\n", flops2String( bl1flops));
+  printf("b-conv 1:   %14s\n", flops2String( bmc1flops));
+  printf("b-ave-p 1:  %14s\n", flops2String( bap1flops));
+  printf("b-log 2:    %14s\n", flops2String( bl2flops));
+  printf("b-conv 2:   %14s\n", flops2String( bmc2flops));
+  printf("b-ave-p 2:  %14s\n", flops2String( bap2flops));
+  printf("b-log 3:    %14s\n", flops2String( bl3flops));
+  printf("b-conv 3:   %14s\n", flops2String( bmc3flops));
+  printf("----------------------------\n");
+  printf("total:      %14s\n", flops2String( flops));
+
   return (k1_shp, b1_shp, k2_shp, b2_shp, fc_shp, b_shp, [], flops);
 }
 

@@ -18,7 +18,7 @@ string flops2String( double flops)
   } else if (flops > 1e3) {
     res = sprintf( "%.2f KFlops", flops/1e3);
   } else {
-    res = sprintf( "%.2f Flops", flops);
+    res = sprintf( "%.2f  Flops", flops);
   }
   return res;
 }
