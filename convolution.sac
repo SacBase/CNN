@@ -3,7 +3,10 @@ module convolution;
 
 use Array: all;
 
-export {MultiConv,Convolve,PaddingConst,BackMultiConv};
+export {MultiConv,MultiConvFlop,
+        Convolve,ConvolveFlop,
+        PaddingConst,
+        BackMultiConv,BackMultiConvFlop};
 
 /**
  *
@@ -94,6 +97,12 @@ float[*] MultiConv( float[*] in, float[*] weights, float[*] bias)
          } : genarray( shp_maps, genarray( shp_act_map, 0f));
 }
 
+int[.], int MultiConvFlop( int[.] in_shp, int[.] weights_shp, int[.] bias_shp)
+{
+    shp_act_map, flops = ConvolveFlop( in_shp, drop( shape(bias_shp), weights_shp));
+    shp_maps = take( shape(bias_shp), weights_shp);
+    return ( shp_maps ++ shp_act_map, prod(shp_maps)*flops);
+}
 
 inline
 float[*] Convolve( float[*] in, float[*] weights)
@@ -106,6 +115,12 @@ float[*] Convolve( float[*] in, float[*] weights)
         } : genarray( shp, 0f);
 
    return out;
+}
+
+int[.], int ConvolveFlop( int[.] in_shp, int[.] weights_shp)
+{
+   out_shp = in_shp-weights_shp+1;
+   return (out_shp, prod(out_shp) * (prod(weights_shp) - 1) );
 }
 
 inline
@@ -155,6 +170,27 @@ BackMultiConv( float[*] d_out, float[*] weights, float[*] in, float[*] bias)
   return ( d_in, d_weights, d_bias);
 }
 
+int[.], int[.], int[.], int BackMultiConvFlop( int[.] d_out_shp, int[.] weights_shp, int[.] in_shp, int[.] bias_shp)
+{
+  shp_act_map = drop( shape(bias_shp), weights_shp);
+  shp_act_out = drop( shape(bias_shp), d_out_shp);
+  shp_maps = take( shape(bias_shp), weights_shp);
+#ifdef MBI
+  flops_in = prod(in_shp) * (prod(shp_maps) - 1) * (prod(shp_act_map) - 1);
+#else
+  d_in_shp, flops_in = BackIn2Flop( shp_act_out, shp_act_map, in_shp);
+  flops_in = (prod(shp_maps) + prod(shp_maps) -1) * flops_in;
+#endif
+  d_weights_shp, flops_weights = BackWeights2Flop( shp_act_out, shp_act_map, in_shp);
+  d_bias_shp, flops_bias = BackBiasFlop( shp_act_out);
+  flops = flops_in
+          + prod(shp_maps) * flops_weights
+          + prod(shp_maps) * flops_bias;
+  return (in_shp, weights_shp, bias_shp, flops);
+}
+
+
+
 inline
 float[*] BackIn( float[*] d_out, float[*] weights, float[*] in)
 //
@@ -172,6 +208,13 @@ float[*] BackIn( float[*] d_out, float[*] weights, float[*] in)
          } : fold( +, genarray( shape(in), 0f));
 }
 
+int[.], int BackInFlop( int[.] d_out_shp, int[.] weights_shp, int[.] in_shp)
+{
+  return (in_shp, prod(d_out_shp) * prod(weights_shp) + prod(in_shp) * (prod(weights_shp)-1));
+}
+
+
+
 inline
 float[*] BackIn2( float[*] d_out, float[*] weights, float[*] in)
 {
@@ -183,6 +226,10 @@ float[*] BackIn2( float[*] d_out, float[*] weights, float[*] in)
          } : genarray( shape(in), 0f);
 }
 
+int[.], int BackIn2Flop( int[.] d_out_shp, int[.] weights_shp, int[.] in_shp)
+{
+  return (in_shp, prod(in_shp) * ( prod(weights_shp) + (prod(weights_shp)-1)));
+}
 
 inline
 float[*] BackWeights( float[*] d_out, float[*] weights, float[*] in)
@@ -193,6 +240,11 @@ float[*] BackWeights( float[*] d_out, float[*] weights, float[*] in)
                     (. <= ov <= .) : in[ iv+ov] * d_out[iv];
                    } : genarray( shape( weights), 0f );
               } : fold( +, genarray( shape(weights), 0f));
+}
+
+int[.], int BackWeightsFlop( int[.] d_out_shp, int[.] weights_shp, int[.] in_shp)
+{
+  return (weights_shp, prod(weights_shp) * ( prod(d_out_shp)  + (prod(d_out_shp)-1)));
 }
 
 inline
@@ -206,9 +258,19 @@ float[*] BackWeights2( float[*] d_out, float[*] weights, float[*] in)
               } : genarray( shape( weights), 0f);
 }
 
+int[.], int BackWeights2Flop( int[.] d_out_shp, int[.] weights_shp, int[.] in_shp)
+{
+  return (weights_shp, prod(weights_shp) * ( prod(d_out_shp)  + (prod(d_out_shp)-1)));
+}
+
 inline
 float[*] BackBias( float[*] d_out)
 {
   return sum( d_out);
+}
+
+int[.], int BackBiasFlop( int[.] d_out_shp)
+{
+  return ([],prod(d_out_shp)-1);
 }
 
