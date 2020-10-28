@@ -11,21 +11,9 @@ use StdIO: all;
 #define CATEGORIES 10
 #define BATCHSIZE 8
 
-int main()
+noinline
+void donormal( int trainings, int batchsize, float[60000,28,28] training_images, float[6,5,5] k1, float[6] b1)
 {
-   
-   epochs, batchsize, trainings, tests, rate = CnnReadParameters( 20, 100, 1000, 10000, 0.5f);
-
-   k1 = genarray( [6,5,5], 1f/25f);
-   b1 = genarray( [6], 1f/6f);
-
- printf( "Reading training images ...\n");
-   training_images = ( float[60000,28,28]) mnist::ReadImages( "tutorial/train-images.idx3-ubyte");
-   printf( "Read %d training images ...\n", shape(training_images)[0]);
-
-   printf( "Running Zhang with %d epochs, batchsize %d, %d training images, %d tests, and a rate of %f\n",
-           epochs, batchsize, trainings, tests, tod( rate));
-
    i1 = getInterval( "normal", 0);
 
    res = genarray( [6,24,24], 0f);
@@ -46,7 +34,50 @@ int main()
 
    print( shape(c1));
    print( (c1[0,0,0,0]));
+}
 
+
+noinline
+void dobatch( int trainings, int batchsize, float[7500,28,28,8] training_images, float[6,5,5] k1, float[6] b1)
+{
+  i2 = getInterval( "batch", 0);
+
+   res = genarray( [6,24,24,BATCHSIZE], 0f);
+   c1 = genarray( [batchsize/BATCHSIZE, 6,24,24,BATCHSIZE], 0f);
+
+   start( i2);
+   for( i=0; i< trainings/batchsize; i++) {
+
+      c1+= with {
+              (.<= iv <= .) {
+                in = training_images[i*(batchsize/BATCHSIZE)+iv];
+              } : MultiConvBatch( in, k1, b1 );
+            } : genarray([batchsize/BATCHSIZE], res);
+
+   }
+   end( i2);
+   printResult( i2);
+
+   print( shape(c1));
+   print( (c1[0,0,0,0,0]));
+}
+  
+int main()
+{
+   
+   epochs, batchsize, trainings, tests, rate = CnnReadParameters( 20, 100, 1000, 10000, 0.5f);
+
+   k1 = genarray( [6,5,5], 1f/25f);
+   b1 = genarray( [6], 1f/6f);
+
+   printf( "Reading training images ...\n");
+   training_images = ( float[60000,28,28]) mnist::ReadImages( "tutorial/train-images.idx3-ubyte");
+   printf( "Read %d training images ...\n", shape(training_images)[0]);
+
+   printf( "Running Zhang with %d epochs, batchsize %d, %d training images, %d tests, and a rate of %f\n",
+           epochs, batchsize, trainings, tests, tod( rate));
+
+   donormal( trainings, batchsize, training_images, k1, b1);
 
    printf( "Reading batched training images ...\n");
    training_images = ( float[7500,28,28,BATCHSIZE]) mnist::ReadImagesBatch( "tutorial/train-images.idx3-ubyte", BATCHSIZE);
@@ -55,26 +86,7 @@ int main()
    printf( "Running Zhang with %d epochs, batchsize %d, %d training images, %d tests, and a rate of %f\n",
            epochs, batchsize, trainings, tests, tod( rate));
 
-   i2 = getInterval( "batch", 0);
-   
-   res = genarray( [6,24,24,BATCHSIZE], 0f);
-   c1 = genarray( [batchsize/BATCHSIZE, 6,24,24,BATCHSIZE], 0f);
-
-   start( i2);
-   for( i=0; i< trainings/batchsize; i++) { 
-
-      c1+= with {
-              (.<= iv <= .) {
-                in = training_images[i*(batchsize/BATCHSIZE)+iv];
-              } : MultiConvBatch( in, k1, b1 );
-            } : genarray([batchsize/BATCHSIZE], res);
-   
-   }
-   end( i2);
-   printResult( i2);
-
-   print( shape(c1));
-   print( (c1[0,0,0,0,0]));
+   dobatch( trainings, batchsize, training_images, k1, b1);
    
    return 0;
 }
