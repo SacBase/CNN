@@ -16,6 +16,37 @@ int fgetint( File & f)
   return val;
 }
 
+float[.,.,.,.] ReadImagesBatch( String::string file, int bsize)
+{
+  err, f = fopen( file, "r");
+  if( System::fail(err)) {
+    printf( "Error occured when trying to open file %s for reading", file);
+  }
+
+  fseek( f, 4, 0);
+
+  num_images = fgetint( f);
+
+  if( num_images % bsize != 0) {
+    printf( "%d images found; only using %d to match batch size of %d\n",
+            num_images, (num_images/bsize) * bsize, bsize);
+    num_images = (num_images/bsize) * bsize;
+  }
+  num_rows = fgetint( f);
+  num_cols = fgetint( f);
+
+  res = genarray( [num_images/bsize, num_rows, num_cols, bsize], 0f);
+
+  for( i=0; i< num_images/bsize; i++)
+    for( l=0; l< bsize; l++)
+      for( j=0; j< num_rows; j++)
+        for( k=0; k< num_cols; k++)
+          res[i,j,k,l] = tof( fgetc( f));
+
+  fclose( f);
+  return res;
+}
+
 float[.,.,.] ReadImages( String::string file)
 {
   err, f = fopen( file, "r");
